@@ -2,9 +2,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import { runWdio } from '#src/launcher.js'
-import { readFailedTests, resetManifest } from '#src/manifest.js'
-import { buildExactTitleRegExps, createRerunSpecPlans } from '#src/planner.js'
+import { runWdio } from '#src/launcher'
+import { readFailedTests, resetManifest } from '#src/manifest'
+import { buildExactTitleRegExps, createRerunSpecPlans } from '#src/planner'
 import type {
     FailedRerunAttemptResult,
     FailedRerunAttemptType,
@@ -18,7 +18,7 @@ import type {
     FailedTestsRerunner,
     FailedTestsRerunnerDeps,
     RerunSpecPlan
-} from '#src/types.js'
+} from '#src/types'
 
 interface RerunSettings {
     args: FailedRerunRunArgs

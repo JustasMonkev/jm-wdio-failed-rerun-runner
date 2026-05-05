@@ -2,10 +2,13 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 
+import * as z from 'zod'
+
+import { jsonSerializableValueSchema } from '#src/schemas'
 import type {
     FailedRerunRun,
     FailedRerunRunArgs
-} from '#src/types.js'
+} from '#src/types'
 
 type LauncherConstructor = new (
     configPath: string,
@@ -18,6 +21,10 @@ type WdioCliModule = {
     Launcher?: LauncherConstructor
 }
 
+const wdioCliModuleSchema = z.object({
+    Launcher: z.custom<LauncherConstructor>((value) => typeof value === 'function')
+}).passthrough()
+
 export const runWdio = createWdioRun()
 
 export function createWdioRun(loadWdioCli: () => Promise<WdioCliModule> = importWdioCli): FailedRerunRun {
@@ -28,12 +35,12 @@ export function createWdioRun(loadWdioCli: () => Promise<WdioCliModule> = import
 }
 
 export async function loadWdioLauncher(loadWdioCli: () => Promise<WdioCliModule> = importWdioCli) {
-    const { Launcher } = await loadWdioCli()
-    if (!Launcher) {
+    const result = wdioCliModuleSchema.safeParse(await loadWdioCli())
+    if (!result.success) {
         throw new Error('@wdio/cli did not export Launcher')
     }
 
-    return Launcher
+    return result.data.Launcher
 }
 
 async function importWdioCli(): Promise<WdioCliModule> {
@@ -84,18 +91,9 @@ function withoutServices(args: FailedRerunRunArgs): FailedRerunRunArgs {
 }
 
 function assertJsonSerializable<T>(value: T): T {
-    if (typeof value === 'function' || typeof value === 'symbol' || typeof value === 'undefined') {
+    const result = jsonSerializableValueSchema.safeParse(value)
+    if (!result.success) {
         throw new Error('WDIO service injection only supports JSON-serializable service entries')
-    }
-
-    if (Array.isArray(value)) {
-        for (const item of value) {
-            assertJsonSerializable(item)
-        }
-    } else if (value && typeof value === 'object') {
-        for (const item of Object.values(value)) {
-            assertJsonSerializable(item)
-        }
     }
 
     return value

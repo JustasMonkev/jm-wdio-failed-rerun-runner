@@ -2,14 +2,15 @@ import path from 'node:path'
 
 import * as z from 'zod'
 
-import { runFailedTestsRerun } from '#src/rerunner.js'
+import { runFailedTestsRerun } from '#src/rerunner'
 
 const nonNegativeIntegerStringSchema = z.string().transform((value, context) => {
     const maxReruns = Number(value)
 
     if (!Number.isInteger(maxReruns) || maxReruns < 0) {
-        context.addIssue({
+        context.issues.push({
             code: 'custom',
+            input: value,
             message: '--max-reruns must be a non-negative integer'
         })
         return z.NEVER
@@ -17,6 +18,8 @@ const nonNegativeIntegerStringSchema = z.string().transform((value, context) => 
 
     return maxReruns
 })
+
+const cliFlagValueSchema = z.string().min(1).refine((value) => !value.startsWith('-'))
 
 const parsedCliArgsSchema = z.object({
     configPath: z.string().optional(),
@@ -169,7 +172,7 @@ function readFlagValue(args: string[], index: number, flag: string) {
     }
 
     const value = args[index + 1]
-    if (!value || value.startsWith('-')) {
+    if (!cliFlagValueSchema.safeParse(value).success) {
         throw new CliUsageError(`Missing value for ${flag}`)
     }
 

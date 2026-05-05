@@ -8,14 +8,14 @@ import FailedTestRerunService, {
     createFailedTestsRerunner,
     FAILED_RERUN_RETRY_ENV,
     runFailedTestsRerun
-} from '#src/index.js'
+} from '#src/index'
 import type {
     FailedRerunRetryEnv,
     FailedRerunRunArgs,
     FailedRerunServiceOptions,
     FailedTestManifestStore,
     FailedTestRecord
-} from '#src/types.js'
+} from '#src/types'
 
 type RecordedRun = {
     configPath: string

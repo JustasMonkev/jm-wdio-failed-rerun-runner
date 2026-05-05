@@ -10,21 +10,13 @@
       "node"
     ],
     "strict": true,
-    "ignoreDeprecations": "6.0",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "baseUrl": ".",
     "outDir": "./build",
     "rootDir": "./src",
     "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true,
-    "paths": {
-      "#src/*": [
-        "./src/*"
-      ]
-    }
+    "forceConsistentCasingInFileNames": true
   },
   "include": [
     "src/**/*"
