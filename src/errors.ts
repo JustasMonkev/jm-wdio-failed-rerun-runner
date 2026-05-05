@@ -1,7 +1,7 @@
 import type {
     FailedRerunJsonValue,
     FailedTestError
-} from '#src/types.js'
+} from '#src/types'
 
 export function serializeError(error: unknown, seen = new WeakSet<object>()): FailedTestError | undefined {
     if (typeof error === 'string' && error) {

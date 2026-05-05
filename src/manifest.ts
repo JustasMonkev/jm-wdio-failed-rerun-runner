@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import type { FailedTestRecord } from '#src/types.js'
+import { failedTestRecordSchema } from '#src/schemas'
+import type { FailedTestRecord } from '#src/types'
 
 export async function resetManifest(manifestPath: string) {
     await fs.mkdir(path.dirname(manifestPath), { recursive: true })
@@ -10,7 +11,7 @@ export async function resetManifest(manifestPath: string) {
 
 export async function appendFailedTest(manifestPath: string, record: FailedTestRecord) {
     await fs.mkdir(path.dirname(manifestPath), { recursive: true })
-    await fs.appendFile(manifestPath, `${JSON.stringify(record)}\n`, 'utf8')
+    await fs.appendFile(manifestPath, `${JSON.stringify(failedTestRecordSchema.parse(record))}\n`, 'utf8')
 }
 
 export async function readFailedTests(manifestPath: string): Promise<FailedTestRecord[]> {
@@ -29,7 +30,7 @@ function parseManifest(content: string) {
     return content
         .split('\n')
         .filter(Boolean)
-        .map((line) => JSON.parse(line) as FailedTestRecord)
+        .map((line) => failedTestRecordSchema.parse(JSON.parse(line)))
 }
 
 function dedupeFailedTests(records: FailedTestRecord[]) {

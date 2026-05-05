@@ -1,10 +1,11 @@
 import type { Frameworks } from '@wdio/types'
+import * as z from 'zod'
 
-import { serializeError } from '#src/errors.js'
+import { serializeError } from '#src/errors'
 import type {
     FailedRerunAttemptType,
     FailedTestRecord
-} from '#src/types.js'
+} from '#src/types'
 
 interface RecordContext {
     attempt: FailedRerunAttemptType
@@ -23,6 +24,19 @@ interface CucumberScenarioWorld {
     }
     uri?: string
 }
+
+const nonEmptyStringSchema = z.string().min(1)
+const fullTitleCallbackSchema = z.custom<() => string>((value) => typeof value === 'function')
+const cucumberScenarioWorldSchema: z.ZodType<CucumberScenarioWorld> = z.object({
+    gherkinDocument: z.object({
+        uri: z.string().optional()
+    }).optional(),
+    pickle: z.object({
+        name: z.string().optional(),
+        uri: z.string().optional()
+    }).optional(),
+    uri: z.string().optional()
+}).passthrough()
 
 export function createMochaFailedTestRecord(
     test: Frameworks.Test,
@@ -71,21 +85,23 @@ export function createCucumberFailedScenarioRecord(
 }
 
 function getSpecFile(test: Frameworks.Test) {
-    return typeof test.file === 'string' ? test.file : undefined
+    return parseNonEmptyString(test.file)
 }
 
 function getMochaFullTitle(test: Frameworks.Test) {
     const fullTitle = readProperty(test, 'fullTitle') as FullTitle | undefined
+    const stringTitle = parseNonEmptyString(fullTitle)
 
-    if (typeof fullTitle === 'string' && fullTitle) {
-        return fullTitle
+    if (stringTitle) {
+        return stringTitle
     }
 
-    if (typeof fullTitle === 'function') {
-        return fullTitle() || undefined
+    const callbackTitle = fullTitleCallbackSchema.safeParse(fullTitle)
+    if (callbackTitle.success) {
+        return parseNonEmptyString(callbackTitle.data())
     }
 
-    return [test.parent, test.title].filter(Boolean).join(' ') || undefined
+    return parseNonEmptyString([test.parent, test.title].filter(Boolean).join(' '))
 }
 
 function getCucumberScenarioName(world: Frameworks.World) {
@@ -98,13 +114,15 @@ function getCucumberSpecFile(world: Frameworks.World) {
 }
 
 function getCucumberWorld(world: Frameworks.World): CucumberScenarioWorld | undefined {
-    return isObject(world) ? world : undefined
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object'
+    const result = cucumberScenarioWorldSchema.safeParse(world)
+    return result.success ? result.data : undefined
 }
 
 function readProperty(value: object, key: string) {
     return (value as Record<string, unknown>)[key]
+}
+
+function parseNonEmptyString(value: unknown) {
+    const result = nonEmptyStringSchema.safeParse(value)
+    return result.success ? result.data : undefined
 }

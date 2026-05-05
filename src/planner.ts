@@ -4,7 +4,7 @@ import type {
     FailedTestRecord,
     MochaRerunSpecPlan,
     RerunSpecPlan
-} from '#src/types.js'
+} from '#src/types'
 
 export function createRerunSpecPlans(records: FailedTestRecord[]): RerunSpecPlan[] {
     const recordsByFrameworkAndSpec = groupByFrameworkAndSpec(records)

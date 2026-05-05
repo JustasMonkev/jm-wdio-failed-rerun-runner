@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { createWdioRun, loadWdioLauncher } from '#src/launcher.js'
+import { createWdioRun, loadWdioLauncher } from '#src/launcher'
 
 describe('WDIO launcher adapter', () => {
     it('loads the real @wdio/cli Launcher export', async () => {

@@ -4,8 +4,8 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { appendFailedTest, readFailedTests, resetManifest } from '#src/manifest.js'
-import type { FailedTestRecord } from '#src/types.js'
+import { appendFailedTest, readFailedTests, resetManifest } from '#src/manifest'
+import type { FailedTestRecord } from '#src/types'
 
 const tempDirs: string[] = []
 
