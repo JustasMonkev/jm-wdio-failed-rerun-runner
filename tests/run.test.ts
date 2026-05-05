@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { CliUsageError, parseCliArgs } from '#src/run.js'
+import { CliUsageError, parseCliArgs } from '#src/run'
 
 describe('CLI argument parsing', () => {
     it('accepts the run subcommand with focused-rerun options', () => {

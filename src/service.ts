@@ -1,21 +1,31 @@
 import type { Frameworks, Services } from '@wdio/types'
 
-import { appendFailedTest } from '#src/manifest.js'
+import { appendFailedTest } from '#src/manifest'
+import { failedRerunServiceOptionsSchema } from '#src/schemas'
 import {
     createCucumberFailedScenarioRecord,
     createMochaFailedTestRecord
-} from '#src/frameworks.js'
-import type { FailedRerunServiceOptions, FailedTestRecord } from '#src/types.js'
+} from '#src/frameworks'
+import type { FailedRerunServiceOptions, FailedTestRecord } from '#src/types'
 
 export default class FailedTestRerunService implements Services.ServiceInstance {
+    public readonly options: FailedRerunServiceOptions
+    public readonly capabilities?: WebdriverIO.Capabilities
+    public readonly config?: WebdriverIO.Config
+
     constructor(
-        public readonly options: FailedRerunServiceOptions,
-        public readonly capabilities?: WebdriverIO.Capabilities,
-        public readonly config?: WebdriverIO.Config
+        options: FailedRerunServiceOptions,
+        capabilities?: WebdriverIO.Capabilities,
+        config?: WebdriverIO.Config
     ) {
-        if (!options.manifestPath) {
-            throw new Error('FailedTestRerunService requires a manifestPath option')
+        const parsedOptions = failedRerunServiceOptionsSchema.safeParse(options)
+        if (!parsedOptions.success) {
+            throw new Error(parsedOptions.error.issues[0]?.message || 'Invalid FailedTestRerunService options')
         }
+
+        this.options = parsedOptions.data
+        this.capabilities = capabilities
+        this.config = config
     }
 
     async afterTest(test: Frameworks.Test, _context: unknown, result: Frameworks.TestResult) {

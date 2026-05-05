@@ -22,8 +22,8 @@
   "type": "module",
   "imports": {
     "#src/*": {
-      "types": "./src/*",
-      "default": "./build/*"
+      "types": "./src/*.ts",
+      "default": "./build/*.js"
     }
   },
   "types": "./build/index.d.ts",

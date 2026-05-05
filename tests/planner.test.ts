@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildExactTitleGrep, buildExactTitleRegExps, createRerunSpecPlans } from '#src/planner.js'
-import type { FailedRerunFramework, FailedTestRecord } from '#src/types.js'
+import { buildExactTitleGrep, buildExactTitleRegExps, createRerunSpecPlans } from '#src/planner'
+import type { FailedRerunFramework, FailedTestRecord } from '#src/types'
 
 function failedTest(
     spec: string,

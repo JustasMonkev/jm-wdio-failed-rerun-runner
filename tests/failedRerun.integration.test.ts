@@ -4,8 +4,8 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import FailedTestRerunService, { FAILED_RERUN_RETRY_ENV, runFailedTestsRerun } from '#src/index.js'
-import type { FailedRerunRunArgs, FailedRerunServiceOptions } from '#src/types.js'
+import FailedTestRerunService, { FAILED_RERUN_RETRY_ENV, runFailedTestsRerun } from '#src/index'
+import type { FailedRerunRunArgs, FailedRerunServiceOptions } from '#src/types'
 
 type RecordedRun = {
     configPath: string
