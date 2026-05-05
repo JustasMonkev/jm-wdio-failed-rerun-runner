@@ -2,7 +2,7 @@ import path from 'node:path'
 
 import * as z from 'zod'
 
-import { runFailedTestsRerun } from '#src/launcher.js'
+import { runFailedTestsRerun } from '#src/rerunner.js'
 
 const nonNegativeIntegerStringSchema = z.string().transform((value, context) => {
     const maxReruns = Number(value)

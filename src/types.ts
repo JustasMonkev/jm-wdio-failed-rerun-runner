@@ -58,6 +58,25 @@ export interface FailedTestsRerunOptions {
     run?: FailedRerunRun
 }
 
+export interface FailedTestsRerunner {
+    run(configPath: string, options?: FailedTestsRerunOptions): Promise<FailedRerunResult>
+}
+
+export interface FailedTestsRerunnerDeps {
+    run?: FailedRerunRun
+    manifests?: FailedTestManifestStore
+    retryEnv?: FailedRerunRetryEnv
+}
+
+export interface FailedTestManifestStore {
+    reset(manifestPath: string): Promise<void>
+    read(manifestPath: string): Promise<FailedTestRecord[]>
+}
+
+export interface FailedRerunRetryEnv {
+    withRetry<T>(retry: number, run: () => Promise<T>): Promise<T>
+}
+
 export type RerunSpecPlan = MochaRerunSpecPlan | CucumberRerunSpecPlan
 
 interface RerunSpecPlanBase {

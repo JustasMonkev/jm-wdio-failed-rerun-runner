@@ -4,8 +4,18 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import FailedTestRerunService, { FAILED_RERUN_RETRY_ENV, runFailedTestsRerun } from '#src/index.js'
-import type { FailedRerunRunArgs, FailedRerunServiceOptions } from '#src/types.js'
+import FailedTestRerunService, {
+    createFailedTestsRerunner,
+    FAILED_RERUN_RETRY_ENV,
+    runFailedTestsRerun
+} from '#src/index.js'
+import type {
+    FailedRerunRetryEnv,
+    FailedRerunRunArgs,
+    FailedRerunServiceOptions,
+    FailedTestManifestStore,
+    FailedTestRecord
+} from '#src/types.js'
 
 type RecordedRun = {
     configPath: string
@@ -53,6 +63,35 @@ async function recordFailedScenario(args: FailedRerunRunArgs, featureFile: strin
     }, {})
 }
 
+function failedTestRecord(spec: string, fullTitle: string): FailedTestRecord {
+    return {
+        attempt: 'initial',
+        framework: 'mocha',
+        spec,
+        fullTitle
+    }
+}
+
+function createInMemoryManifestStore(recordsByPath: Map<string, FailedTestRecord[]>): FailedTestManifestStore {
+    return {
+        async reset(manifestPath) {
+            recordsByPath.set(manifestPath, [])
+        },
+        async read(manifestPath) {
+            return recordsByPath.get(manifestPath) || []
+        }
+    }
+}
+
+function createIsolatedRetryEnv(retries: number[]): FailedRerunRetryEnv {
+    return {
+        async withRetry(retry, run) {
+            retries.push(retry)
+            return run()
+        }
+    }
+}
+
 describe('failed test rerun integration', () => {
     afterEach(async () => {
         while (tempDirs.length > 0) {
@@ -87,6 +126,40 @@ describe('failed test rerun integration', () => {
         expect(runs[1].args.mochaOpts?.grep).toBe('^(?:checkout rejects expired card)$')
         expect(runs[2].args.spec).toEqual([secondSpec])
         expect(runs[2].args.mochaOpts?.grep).toBe('^(?:account updates profile)$')
+    })
+
+    it('supports a rerunner factory with local manifest and retry adapters', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'specs', 'checkout.e2e.ts')
+        const failure = failedTestRecord(spec, 'cart total is $12.00?')
+        const recordsByPath = new Map<string, FailedTestRecord[]>()
+        const retries: number[] = []
+        const runs: RecordedRun[] = []
+        const rerunner = createFailedTestsRerunner({
+            manifests: createInMemoryManifestStore(recordsByPath),
+            retryEnv: createIsolatedRetryEnv(retries),
+            run: async (configPath, args) => {
+                runs.push({ configPath, args })
+
+                if (runs.length === 1) {
+                    recordsByPath.set(getServiceOptions(args).manifestPath, [failure, failure])
+                    return 1
+                }
+
+                return 0
+            }
+        })
+
+        const result = await rerunner.run(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace
+        })
+
+        expect(result.exitCode).toBe(0)
+        expect(result.attempts[0].failures).toEqual([failure])
+        expect(retries).toEqual([0, 1])
+        expect(runs).toHaveLength(2)
+        expect(runs[1].args.spec).toEqual([spec])
+        expect(runs[1].args.mochaOpts?.grep).toBe('^(?:cart total is \\$12\\.00\\?)$')
     })
 
     it('exposes retry count as zero on the initial run and one on the first rerun', async () => {

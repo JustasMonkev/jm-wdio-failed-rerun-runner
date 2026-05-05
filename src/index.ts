@@ -1,6 +1,6 @@
 export { default } from '#src/service.js'
 export { default as FailedTestRerunService } from '#src/service.js'
-export { FAILED_RERUN_RETRY_ENV, runFailedTestsRerun } from '#src/launcher.js'
+export { createFailedTestsRerunner, FAILED_RERUN_RETRY_ENV, runFailedTestsRerun } from '#src/rerunner.js'
 export { createRerunSpecPlans, buildExactTitleGrep } from '#src/planner.js'
 export { appendFailedTest, readFailedTests, resetManifest } from '#src/manifest.js'
 export * from '#src/types.js'

@@ -81,6 +81,22 @@ Important options:
 
 The result includes the final `exitCode`, all run `attempts`, and unresolved `failures`.
 
+Advanced callers and tests can create a rerunner with local adapters:
+
+```ts
+import { createFailedTestsRerunner } from '@wdio/failed-rerun-runner'
+
+const rerunner = createFailedTestsRerunner({
+    run: customWdioRun,
+    manifests: customManifestStore,
+    retryEnv: customRetryEnv
+})
+
+const result = await rerunner.run('./wdio.conf.ts')
+```
+
+The default `runFailedTestsRerun` function is the normal entry point. The factory is for cases that need to substitute the WDIO runner, manifest storage, or retry environment boundary.
+
 During the initial run, workers inherit `WDIO_FAILED_RERUN_RETRY=0`. During focused reruns, workers inherit `WDIO_FAILED_RERUN_RETRY=1` for the first rerun round, `2` for the second, and so on. The launcher restores the previous environment value after each WDIO launch.
 
 ## Failure Handling
