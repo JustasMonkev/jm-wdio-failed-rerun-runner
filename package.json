@@ -1,0 +1,76 @@
+{
+  "name": "jm-wdio-failed-rerun-runner",
+  "description": "A WebdriverIO helper that reruns only tests that failed in the initial run.",
+  "engines": {
+    "node": ">=18.20.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/webdriverio/webdriverio.git",
+    "directory": "packages/wdio-failed-rerun-runner"
+  },
+  "keywords": [
+    "webdriver",
+    "webdriverio",
+    "wdio",
+    "rerun",
+    "retry"
+  ],
+  "bin": {
+    "wdio-failed-rerun-runner": "./build/cli.js"
+  },
+  "type": "module",
+  "imports": {
+    "#src/*": {
+      "types": "./src/*",
+      "default": "./build/*"
+    }
+  },
+  "types": "./build/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./build/index.d.ts",
+      "import": "./build/index.js"
+    },
+    "./run": {
+      "source": "./src/run.ts",
+      "types": "./build/run.d.ts",
+      "import": "./build/run.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "npm run lint && npm run typecheck && npm run coverage",
+    "lint": "eslint .",
+    "prepack": "npm run build",
+    "test": "npm run build && vitest run tests",
+    "coverage": "vitest run tests --coverage",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit"
+  },
+  "files": [
+    "build",
+    "src",
+    "README.md",
+    "diagram.md",
+    "LICENSE"
+  ],
+  "typeScriptVersion": "6.0.3",
+  "dependencies": {
+    "@wdio/cli": "^9.27.1",
+    "@wdio/types": "^9.27.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^25.6.0",
+    "@vitest/coverage-v8": "^4.1.5",
+    "eslint": "^10.3.0",
+    "jiti": "^2.6.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.59.2",
+    "vitest": "^4.1.5"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
