@@ -1,0 +1,56 @@
+{
+  "name": "wdio-config-auditor",
+  "version": "0.1.0",
+  "description": "Validate that WebdriverIO tests are correctly declared and discoverable from package.json and WDIO configuration files.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "webdriverio",
+    "wdio",
+    "config",
+    "audit",
+    "lint",
+    "testing",
+    "glob"
+  ],
+  "bin": {
+    "wdio-config-auditor": "./build/cli.js"
+  },
+  "main": "./build/index.js",
+  "types": "./build/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./build/index.d.ts",
+      "import": "./build/index.js"
+    }
+  },
+  "files": [
+    "build",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage",
+    "check": "npm run typecheck && npm run build && npm run test",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "jiti": "^2.6.1",
+    "tinyglobby": "^0.2.15"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.5"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
