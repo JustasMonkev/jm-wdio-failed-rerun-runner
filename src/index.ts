@@ -1,6 +1,7 @@
 export { default } from '#src/service'
 export { default as FailedTestRerunService } from '#src/service'
-export { createFailedTestsRerunner, FAILED_RERUN_RETRY_ENV, runFailedTestsRerun } from '#src/rerunner'
+export { createFailedTestsRerunner, FAILED_RERUN_RETRY_ENV, FAILED_RERUN_SERVICE_PATH, runFailedTestsRerun } from '#src/rerunner'
+export { BROWSERSTACK_RERUN_ENV, BROWSERSTACK_RERUN_TESTS_ENV, processBrowserStackEnv } from '#src/browserstack'
 export { createRerunSpecPlans, buildExactTitleGrep } from '#src/planner'
 export { appendFailedTest, readFailedTests, resetManifest } from '#src/manifest'
 export * from '#src/types'

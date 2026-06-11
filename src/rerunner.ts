@@ -1,13 +1,16 @@
 import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 
+import { processBrowserStackEnv } from '#src/browserstack'
 import { runWdio } from '#src/launcher'
 import { readFailedTests, resetManifest } from '#src/manifest'
 import { buildExactTitleRegExps, createRerunSpecPlans } from '#src/planner'
 import type {
     FailedRerunAttemptResult,
     FailedRerunAttemptType,
+    FailedRerunBrowserStackEnv,
     FailedRerunRetryEnv,
     FailedRerunRun,
     FailedRerunRunArgs,
@@ -22,6 +25,7 @@ import type {
 
 interface RerunSettings {
     args: FailedRerunRunArgs
+    browserstackEnv: FailedRerunBrowserStackEnv
     cwd: string
     manifestPath: string
     manifests: FailedTestManifestStore
@@ -45,6 +49,12 @@ interface RerunSummary {
 }
 
 export const FAILED_RERUN_RETRY_ENV = 'WDIO_FAILED_RERUN_RETRY'
+
+// WebdriverIO resolves bare service names as `@wdio/<name>-service` or
+// `wdio-<name>-service`, so the only name-independent way to self-inject
+// the worker service is an absolute path, which the plugin loader imports
+// directly as a file URL.
+export const FAILED_RERUN_SERVICE_PATH = fileURLToPath(new URL('./index.js', import.meta.url))
 
 const fileSystemManifestStore: FailedTestManifestStore = {
     reset: resetManifest,
@@ -88,6 +98,7 @@ function createRerunSettings(
 
     return {
         args: options.args || {},
+        browserstackEnv: deps.browserstackEnv || processBrowserStackEnv,
         cwd,
         manifestPath: resolveManifestPath(options.manifestPath, cwd, 'initial'),
         manifests: deps.manifests || fileSystemManifestStore,
@@ -190,7 +201,10 @@ async function runRerunPlan(
 
     const exitCode = await settings.retryEnv.withRetry(
         round + 1,
-        () => normalizeExitCode(settings.run(configPath, createRerunArgs(settings.args, plan, manifestPath)))
+        () => settings.browserstackEnv.withRerun(
+            [plan.spec],
+            () => normalizeExitCode(settings.run(configPath, createRerunArgs(settings.args, plan, manifestPath)))
+        )
     )
     const failures = await readManifestFailures(settings, manifestPath)
 
@@ -304,7 +318,7 @@ function withFailureService(args: FailedRerunRunArgs, options: {
         ...args,
         services: [
             ...(args.services || []),
-            ['@wdio/failed-rerun-runner', options]
+            [FAILED_RERUN_SERVICE_PATH, options]
         ]
     }
 }

@@ -5,11 +5,15 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import FailedTestRerunService, {
+    BROWSERSTACK_RERUN_ENV,
+    BROWSERSTACK_RERUN_TESTS_ENV,
     createFailedTestsRerunner,
     FAILED_RERUN_RETRY_ENV,
+    FAILED_RERUN_SERVICE_PATH,
     runFailedTestsRerun
 } from '#src/index'
 import type {
+    FailedRerunBrowserStackEnv,
     FailedRerunRetryEnv,
     FailedRerunRunArgs,
     FailedRerunServiceOptions,
@@ -31,9 +35,9 @@ async function makeTempDir() {
 }
 
 function getServiceOptions(args: FailedRerunRunArgs) {
-    const service = args.services?.find((entry) => Array.isArray(entry) && entry[0] === '@wdio/failed-rerun-runner')
+    const service = args.services?.find((entry) => Array.isArray(entry) && entry[0] === FAILED_RERUN_SERVICE_PATH)
     expect(service).toBeDefined()
-    return (service as ['@wdio/failed-rerun-runner', FailedRerunServiceOptions])[1]
+    return (service as [string, FailedRerunServiceOptions])[1]
 }
 
 async function recordFailedTest(args: FailedRerunRunArgs, specFile: string, fullTitle: string) {
@@ -228,6 +232,89 @@ describe('failed test rerun integration', () => {
         expect(runs).toHaveLength(4)
         expect(runs[3].args.spec).toEqual([secondSpec])
         expect(runs[3].args.mochaOpts?.grep).toBe('^(?:account updates profile)$')
+    })
+
+    it('marks focused reruns with the BrowserStack rerun environment', async () => {
+        const workspace = await makeTempDir()
+        const firstSpec = path.join(workspace, 'specs', 'checkout.e2e.ts')
+        const secondSpec = path.join(workspace, 'specs', 'account.e2e.ts')
+        const browserstackEnvPerRun: Array<{
+            rerun: string | undefined
+            rerunTests: string | undefined
+        }> = []
+
+        const result = await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace,
+            run: async (configPath, args) => {
+                browserstackEnvPerRun.push({
+                    rerun: process.env[BROWSERSTACK_RERUN_ENV],
+                    rerunTests: process.env[BROWSERSTACK_RERUN_TESTS_ENV]
+                })
+
+                if (browserstackEnvPerRun.length === 1) {
+                    await recordFailedTest(args, firstSpec, 'checkout rejects expired card')
+                    await recordFailedTest(args, secondSpec, 'account updates profile')
+                    return 1
+                }
+
+                return 0
+            }
+        })
+
+        expect(result.exitCode).toBe(0)
+        expect(browserstackEnvPerRun).toEqual([
+            {
+                rerun: undefined,
+                rerunTests: undefined
+            },
+            {
+                rerun: 'true',
+                rerunTests: firstSpec
+            },
+            {
+                rerun: 'true',
+                rerunTests: secondSpec
+            }
+        ])
+        expect(process.env[BROWSERSTACK_RERUN_ENV]).toBeUndefined()
+        expect(process.env[BROWSERSTACK_RERUN_TESTS_ENV]).toBeUndefined()
+    })
+
+    it('supports a custom BrowserStack environment adapter', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'specs', 'checkout.e2e.ts')
+        const rerunSpecs: string[][] = []
+        const browserstackEnv: FailedRerunBrowserStackEnv = {
+            async withRerun(specs, run) {
+                rerunSpecs.push(specs)
+                return run()
+            }
+        }
+        let runCount = 0
+
+        const rerunner = createFailedTestsRerunner({
+            browserstackEnv,
+            run: async (configPath, args) => {
+                runCount++
+
+                if (runCount === 1) {
+                    await recordFailedTest(args, spec, 'checkout rejects expired card')
+                    return 1
+                }
+
+                return 0
+            }
+        })
+
+        const result = await rerunner.run(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace
+        })
+
+        expect(result.exitCode).toBe(0)
+        expect(runCount).toBe(2)
+        expect(rerunSpecs).toEqual([[spec]])
+        expect(process.env[BROWSERSTACK_RERUN_ENV]).toBeUndefined()
+        expect(process.env[BROWSERSTACK_RERUN_TESTS_ENV]).toBeUndefined()
     })
 
     it('preserves BrowserStack Appium mobile settings when rerunning a failed Mocha test', async () => {

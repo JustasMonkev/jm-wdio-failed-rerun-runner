@@ -1,13 +1,15 @@
 {
   "name": "jm-wdio-failed-rerun-runner",
+  "version": "0.1.0",
   "description": "A WebdriverIO helper that reruns only tests that failed in the initial run.",
+  "license": "MIT",
+  "author": "Justas <justaskietas123@gmail.com>",
   "engines": {
     "node": ">=18.20.0"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/webdriverio/webdriverio.git",
-    "directory": "packages/wdio-failed-rerun-runner"
+    "url": "git+https://github.com/justaskietas/jm-wdio-failed-rerun-runner.git"
   },
   "keywords": [
     "webdriver",
@@ -33,7 +35,6 @@
       "import": "./build/index.js"
     },
     "./run": {
-      "source": "./src/run.ts",
       "types": "./build/run.d.ts",
       "import": "./build/run.js"
     }
@@ -51,10 +52,8 @@
     "build",
     "src",
     "README.md",
-    "diagram.md",
     "LICENSE"
   ],
-  "typeScriptVersion": "6.0.3",
   "dependencies": {
     "@wdio/cli": "^9.27.1",
     "@wdio/types": "^9.27.1",

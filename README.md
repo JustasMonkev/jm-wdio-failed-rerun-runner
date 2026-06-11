@@ -1,8 +1,16 @@
-# @wdio/failed-rerun-runner
+# jm-wdio-failed-rerun-runner
 
-`@wdio/failed-rerun-runner` runs a normal WebdriverIO pass first, records tests that fail, and then starts focused rerun passes for only those failed tests.
+`jm-wdio-failed-rerun-runner` runs a normal WebdriverIO pass first, records tests that fail, and then starts focused rerun passes for only those failed tests.
 
 The package is useful when you want a rerun step after the main run finishes, instead of framework-level retries during the test body.
+
+## Installation
+
+```sh
+npm install --save-dev jm-wdio-failed-rerun-runner
+```
+
+A runnable demo project lives in [`example/`](./example/README.md).
 
 ## Usage
 
@@ -44,7 +52,7 @@ If two tests failed in the first run, only those specs/titles are rerun:
 Or call the public API from Node.js:
 
 ```ts
-import { runFailedTestsRerun } from '@wdio/failed-rerun-runner'
+import { runFailedTestsRerun } from 'jm-wdio-failed-rerun-runner'
 
 const result = await runFailedTestsRerun('./wdio.conf.ts', {
     maxReruns: 1
@@ -55,7 +63,7 @@ process.exit(result.exitCode)
 
 ## How It Works
 
-1. The launcher sets `WDIO_FAILED_RERUN_RETRY=0` and injects `FailedTestRerunService` into the first WDIO run.
+1. The launcher sets `WDIO_FAILED_RERUN_RETRY=0` and injects `FailedTestRerunService` into the first WDIO run. The service is injected by the absolute path of the built service entry (exported as `FAILED_RERUN_SERVICE_PATH`), so it loads regardless of the installed package name. Because the path points into the package's `build` directory on disk, bundling this package into another artifact is not supported.
 2. The worker service records failed Mocha `afterTest` events and Cucumber `afterScenario` events into an NDJSON manifest.
 3. If the first run passes, the launcher exits with `0` and does not rerun anything.
 4. If the first run fails and the manifest contains failures, the launcher groups failures by framework and spec.
@@ -84,7 +92,7 @@ The result includes the final `exitCode`, all run `attempts`, and unresolved `fa
 Advanced callers and tests can create a rerunner with local adapters:
 
 ```ts
-import { createFailedTestsRerunner } from '@wdio/failed-rerun-runner'
+import { createFailedTestsRerunner } from 'jm-wdio-failed-rerun-runner'
 
 const rerunner = createFailedTestsRerunner({
     run: customWdioRun,
@@ -106,6 +114,39 @@ If a worker exits with failure before any failed test is recorded, the launcher 
 If a rerun exits with failure but writes no failure records, the final result stays failed. This preserves hard failures such as setup errors, process crashes, and invalid grep filters.
 
 Recorded errors preserve standard `Error` fields plus serializable `cause` and custom enumerable properties. This keeps the manifest useful for diagnostics without allowing non-JSON values to break writes.
+
+## BrowserStack Support
+
+When the suite runs through `@wdio/browserstack-service`, focused reruns follow the same
+environment contract BrowserStack uses for its own failed-test reruns:
+
+- During each focused rerun the launcher sets `BROWSERSTACK_RERUN=true` and
+  `BROWSERSTACK_RERUN_TESTS=<comma-separated spec files>` for that rerun's spec group.
+- The BrowserStack service launcher reads these variables to narrow the run to the failed
+  spec files, and BrowserStack Test Observability tags the rerun build with
+  `failed_tests_rerun: true` instead of treating it as an unrelated new build.
+- The previous values of both variables are restored after each rerun, so an outer
+  BrowserStack-triggered rerun (for example one started from the Observability dashboard)
+  is not affected during the initial run.
+- BrowserStack parses `BROWSERSTACK_RERUN_TESTS` by splitting on commas, so a spec path
+  that itself contains a comma cannot be represented. Such reruns still happen, but
+  without the BrowserStack rerun marking.
+
+No extra configuration is needed: keep `@wdio/browserstack-service` in `services` in the
+WDIO config, and run the rerun runner as usual. Projects that do not use BrowserStack are
+unaffected because nothing else reads these variables.
+
+Advanced callers can substitute the boundary with a custom adapter:
+
+```ts
+import { createFailedTestsRerunner } from 'jm-wdio-failed-rerun-runner'
+
+const rerunner = createFailedTestsRerunner({
+    browserstackEnv: {
+        withRerun: (specs, run) => run()
+    }
+})
+```
 
 ## Framework Support
 

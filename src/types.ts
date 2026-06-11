@@ -66,6 +66,7 @@ export interface FailedTestsRerunnerDeps {
     run?: FailedRerunRun
     manifests?: FailedTestManifestStore
     retryEnv?: FailedRerunRetryEnv
+    browserstackEnv?: FailedRerunBrowserStackEnv
 }
 
 export interface FailedTestManifestStore {
@@ -75,6 +76,10 @@ export interface FailedTestManifestStore {
 
 export interface FailedRerunRetryEnv {
     withRetry<T>(retry: number, run: () => Promise<T>): Promise<T>
+}
+
+export interface FailedRerunBrowserStackEnv {
+    withRerun<T>(specs: string[], run: () => Promise<T>): Promise<T>
 }
 
 export type RerunSpecPlan = MochaRerunSpecPlan | CucumberRerunSpecPlan
