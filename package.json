@@ -1,9 +1,9 @@
 {
   "name": "jm-wdio-failed-rerun-runner",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "A WebdriverIO helper that reruns only tests that failed in the initial run.",
   "license": "MIT",
-  "author": "Justas <justaskietas123@gmail.com>",
+  "author": "https://github.com/JustasMonkev",
   "engines": {
     "node": ">=18.20.0"
   },
