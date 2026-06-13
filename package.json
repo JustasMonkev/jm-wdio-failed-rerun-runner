@@ -24,7 +24,7 @@
   "type": "module",
   "imports": {
     "#src/*": {
-      "types": "./src/*.ts",
+      "types": "./build/*.d.ts",
       "default": "./build/*.js"
     }
   },
@@ -50,7 +50,6 @@
   },
   "files": [
     "build",
-    "src",
     "README.md",
     "LICENSE"
   ],
