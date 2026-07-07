@@ -67,7 +67,7 @@ process.exit(result.exitCode)
 2. The worker service records failed Mocha `afterTest` events and Cucumber `afterScenario` events into an NDJSON manifest.
 3. If the first run passes, the launcher exits with `0` and does not rerun anything.
 4. If the first run fails and the manifest contains failures, the launcher groups failures by framework and spec.
-5. Each group is rerun with `WDIO_FAILED_RERUN_RETRY` set to the focused rerun round, one `spec` value, and a framework-specific exact-title filter: `mochaOpts.grep` for Mocha, or `cucumberOpts.name` for Cucumber scenarios.
+5. Each spec group is rerun with `WDIO_FAILED_RERUN_RETRY` set to the focused rerun round, one `spec` value, and a framework-specific exact-title filter: `mochaOpts.grep` for Mocha, or `cucumberOpts.name` for Cucumber scenarios.
 6. If `maxReruns` is greater than `1`, later rounds are planned only from failures that still failed in the previous round.
 
 The implementation is deliberately a small sequential orchestration. It does not model runner phases with a state machine.
@@ -190,8 +190,8 @@ flowchart TD
     E -- "no" --> G["Read initial NDJSON manifest"]
     G --> H{"Any failed tests recorded?"}
     H -- "no" --> I["Return original failure"]
-    H -- "yes" --> J["Group failures by spec file"]
-    J --> K["Build exact full-title grep per spec"]
+    H -- "yes" --> J["Group failures by framework and spec file"]
+    J --> K["Build exact full-title filter per spec"]
     K --> L["Set WDIO_FAILED_RERUN_RETRY=round+1"]
     L --> M["Run one focused rerun per spec group"]
     M --> N["Read rerun manifests"]
@@ -204,9 +204,9 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    A["afterTest(test, result)"] --> B{"result.passed?"}
-    B -- "true" --> C["Ignore"]
-    B -- "false" --> D["FailedTestRecord"]
+    A["afterTest(test, result)"] --> B{"passed or pending WDIO retry?"}
+    B -- "yes" --> C["Ignore"]
+    B -- "no" --> D["FailedTestRecord"]
     D --> E["NDJSON manifest"]
     E --> F["createRerunSpecPlans(records)"]
     F --> G["{ spec, grep, tests }"]
@@ -215,9 +215,9 @@ flowchart LR
 
 ## Key Guarantees
 
-- Passing tests are not written to the manifest.
+- Passing tests are not written to the manifest, and neither are failures that WDIO's own `retries` option is still going to retry — only the final in-run attempt counts.
 - Initial workers see `WDIO_FAILED_RERUN_RETRY=0`; first focused rerun workers see `1`.
 - Rerun specs are planned from recorded failures, not from all specs in the config.
-- Multiple failed tests in one spec share a single exact-title grep.
+- Multiple failed tests in one spec share a single exact-title filter.
 - Later rerun rounds are based only on the previous round's unresolved failures.
 - If failure data is missing, the launcher preserves the failing exit code instead of widening the rerun.

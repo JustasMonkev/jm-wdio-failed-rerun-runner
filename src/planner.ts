@@ -6,6 +6,10 @@ import type {
     RerunSpecPlan
 } from '#src/types'
 
+export function createRerunPlans(records: FailedTestRecord[]): RerunSpecPlan[] {
+    return createRerunSpecPlans(records)
+}
+
 export function createRerunSpecPlans(records: FailedTestRecord[]): RerunSpecPlan[] {
     const recordsByFrameworkAndSpec = groupByFrameworkAndSpec(records)
 
@@ -40,6 +44,7 @@ function createMochaRerunSpecPlan(spec: string, tests: FailedTestRecord[]): Moch
     return {
         framework: 'mocha',
         spec,
+        specs: [spec],
         tests,
         grep: buildExactTitleGrep(tests.map((test) => test.fullTitle))
     }
@@ -49,6 +54,7 @@ function createCucumberRerunSpecPlan(spec: string, tests: FailedTestRecord[]): C
     return {
         framework: 'cucumber',
         spec,
+        specs: [spec],
         tests
     }
 }

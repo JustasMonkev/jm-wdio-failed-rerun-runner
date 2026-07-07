@@ -20,7 +20,7 @@ import type {
     FailedTestsRerunOptions,
     FailedTestsRerunner,
     FailedTestsRerunnerDeps,
-    RerunSpecPlan
+    RerunPlan
 } from '#src/types'
 
 interface RerunSettings {
@@ -194,7 +194,7 @@ async function runRerunPlan(
     settings: RerunSettings,
     round: number,
     index: number,
-    plan: RerunSpecPlan
+    plan: RerunPlan
 ): Promise<FailedRerunAttemptResult> {
     const manifestPath = resolveManifestPath(settings.rerunManifestPath, settings.cwd, `rerun-${round}-${index}`)
     await settings.manifests.reset(manifestPath)
@@ -202,7 +202,7 @@ async function runRerunPlan(
     const exitCode = await settings.retryEnv.withRetry(
         round + 1,
         () => settings.browserstackEnv.withRerun(
-            [plan.spec],
+            plan.specs,
             () => normalizeExitCode(settings.run(configPath, createRerunArgs(settings.args, plan, manifestPath)))
         )
     )
@@ -212,6 +212,7 @@ async function runRerunPlan(
         exitCode,
         failures,
         spec: plan.spec,
+        specs: plan.specs,
         type: 'rerun' as const
     }
 
@@ -230,7 +231,7 @@ async function runRerunPlan(
     }
 }
 
-function createRerunArgs(baseArgs: FailedRerunRunArgs, plan: RerunSpecPlan, manifestPath: string) {
+function createRerunArgs(baseArgs: FailedRerunRunArgs, plan: RerunPlan, manifestPath: string) {
     const frameworkArgs = plan.framework === 'cucumber'
         ? createCucumberRerunArgs(baseArgs, plan)
         : createMochaRerunArgs(baseArgs, plan)
@@ -241,10 +242,10 @@ function createRerunArgs(baseArgs: FailedRerunRunArgs, plan: RerunSpecPlan, mani
     })
 }
 
-function createMochaRerunArgs(baseArgs: FailedRerunRunArgs, plan: Extract<RerunSpecPlan, { framework: 'mocha' }>) {
+function createMochaRerunArgs(baseArgs: FailedRerunRunArgs, plan: Extract<RerunPlan, { framework: 'mocha' }>) {
     return {
         ...baseArgs,
-        spec: [plan.spec],
+        spec: plan.specs,
         mochaOpts: {
             ...(baseArgs.mochaOpts || {}),
             grep: plan.grep
@@ -252,10 +253,10 @@ function createMochaRerunArgs(baseArgs: FailedRerunRunArgs, plan: Extract<RerunS
     }
 }
 
-function createCucumberRerunArgs(baseArgs: FailedRerunRunArgs, plan: Extract<RerunSpecPlan, { framework: 'cucumber' }>) {
+function createCucumberRerunArgs(baseArgs: FailedRerunRunArgs, plan: Extract<RerunPlan, { framework: 'cucumber' }>) {
     return {
         ...baseArgs,
-        spec: [plan.spec],
+        spec: plan.specs,
         cucumberOpts: {
             ...(baseArgs.cucumberOpts || {}),
             name: buildExactTitleRegExps(plan.tests.map((test) => test.fullTitle))

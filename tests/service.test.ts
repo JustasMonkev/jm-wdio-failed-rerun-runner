@@ -100,6 +100,48 @@ describe('FailedTestRerunService', () => {
         expect(await readFailedTests(manifestPath)).toEqual([])
     })
 
+    it('does not record failures that WDIO will still retry in-run', async () => {
+        const manifestPath = await makeManifestPath()
+        const service = new FailedTestRerunService({
+            manifestPath
+        }, {}, {} as WebdriverIO.Config)
+
+        await service.afterTest({
+            title: 'flaky',
+            fullTitle: 'checkout flaky',
+            file: '/repo/specs/checkout.e2e.ts'
+        } as any, {}, {
+            passed: false,
+            duration: 1,
+            retries: { attempts: 0, limit: 2 }
+        } as any)
+
+        expect(await readFailedTests(manifestPath)).toEqual([])
+    })
+
+    it('does not record failed Cucumber scenarios that WDIO will still retry in-run', async () => {
+        const manifestPath = await makeManifestPath()
+        const service = new FailedTestRerunService({
+            manifestPath
+        }, {}, {} as WebdriverIO.Config)
+
+        await service.afterScenario({
+            pickle: {
+                name: 'checkout flaky scenario',
+                uri: '/repo/features/checkout.feature'
+            },
+            result: {
+                willBeRetried: true
+            }
+        } as any, {
+            passed: false,
+            duration: 7,
+            error: 'Scenario failed'
+        }, {})
+
+        expect(await readFailedTests(manifestPath)).toEqual([])
+    })
+
     it('records a failed Cucumber scenario from afterScenario', async () => {
         const manifestPath = await makeManifestPath()
         const service = new FailedTestRerunService({
