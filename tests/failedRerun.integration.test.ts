@@ -490,7 +490,7 @@ describe('failed test rerun integration', () => {
         expect(runs).toHaveLength(2)
     })
 
-    it('does not hide a hard rerun failure behind another recorded failure', async () => {
+    it('does not hide a same-framework hard rerun failure behind another recorded failure', async () => {
         const workspace = await makeTempDir()
         const firstSpec = path.join(workspace, 'specs', 'checkout.e2e.ts')
         const secondSpec = path.join(workspace, 'specs', 'account.e2e.ts')
@@ -508,19 +508,22 @@ describe('failed test rerun integration', () => {
                     return 1
                 }
 
-                if (runs.length === 3) {
-                    await recordFailedTest(args, secondSpec, 'account updates profile')
+                if (runs.length === 2) {
+                    await recordFailedTest(args, firstSpec, 'checkout rejects expired card')
+                    return 1
                 }
 
-                return 1
+                return args.spec?.includes(firstSpec) ? 0 : 1
             }
         })
 
         expect(result.exitCode).toBe(1)
         expect(result.attempts).toHaveLength(3)
         expect(runs).toHaveLength(3)
+        expect(runs[1].args.spec).toEqual([firstSpec])
+        expect(runs[2].args.spec).toEqual([secondSpec])
         expect(result.failures).toHaveLength(1)
-        expect(result.failures[0].spec).toBe(secondSpec)
+        expect(result.failures[0].spec).toBe(firstSpec)
     })
 
     it('can preserve the initial failing exit code after successful reruns', async () => {

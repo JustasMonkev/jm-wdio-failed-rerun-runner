@@ -29,7 +29,7 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
     }
 
     async afterTest(test: Frameworks.Test, _context: unknown, result: Frameworks.TestResult) {
-        if (result.passed) {
+        if (result.passed || willBeRetriedByWdio(result)) {
             return
         }
 
@@ -37,7 +37,7 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
     }
 
     async afterScenario(world: Frameworks.World, result: Frameworks.PickleResult, _context: unknown) {
-        if (result.passed) {
+        if (result.passed || willBeRetriedByWdioScenario(world)) {
             return
         }
 
@@ -56,4 +56,14 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
             await appendFailedTest(this.options.manifestPath, record)
         }
     }
+}
+
+// WDIO retries the test in-run when `retries` is configured; only the final
+// attempt should decide whether the test lands in the rerun manifest.
+function willBeRetriedByWdio(result: Frameworks.TestResult) {
+    return Boolean(result.retries && result.retries.attempts < result.retries.limit)
+}
+
+function willBeRetriedByWdioScenario(world: Frameworks.World) {
+    return Boolean(world.result?.willBeRetried)
 }

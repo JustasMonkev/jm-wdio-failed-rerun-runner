@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildExactTitleGrep, buildExactTitleRegExps, createRerunSpecPlans } from '#src/planner'
+import { buildExactTitleGrep, buildExactTitleRegExps, createRerunPlans, createRerunSpecPlans } from '#src/planner'
 import type { FailedRerunFramework, FailedTestRecord } from '#src/types'
 
 function failedTest(
@@ -36,21 +36,24 @@ describe('planner', () => {
         ])
     })
 
-    it('groups failed tests by framework and spec', () => {
+    it('groups failed tests by framework and spec so exact-title filters stay scoped to one file', () => {
         const firstSpec = 'specs/checkout.e2e.ts'
         const secondSpec = 'specs/account.e2e.ts'
 
-        const plans = createRerunSpecPlans([
+        const records = [
             failedTest(firstSpec, 'checkout rejects expired card'),
-            failedTest(secondSpec, 'account updates profile'),
+            failedTest(secondSpec, 'checkout rejects expired card'),
             failedTest(firstSpec, 'checkout accepts visa'),
             failedTest(firstSpec, 'checkout rejects expired card', 'cucumber')
-        ])
+        ]
+        const plans = createRerunPlans(records)
 
+        expect(createRerunSpecPlans(records)).toEqual(plans)
         expect(plans).toHaveLength(3)
         expect(plans[0]).toMatchObject({
             framework: 'mocha',
             spec: firstSpec,
+            specs: [firstSpec],
             grep: '^(?:checkout accepts visa|checkout rejects expired card)$'
         })
         expect(plans[0].tests.map((test) => test.fullTitle)).toEqual([
@@ -60,11 +63,13 @@ describe('planner', () => {
         expect(plans[1]).toMatchObject({
             framework: 'mocha',
             spec: secondSpec,
-            grep: '^(?:account updates profile)$'
+            specs: [secondSpec],
+            grep: '^(?:checkout rejects expired card)$'
         })
         expect(plans[2]).toMatchObject({
             framework: 'cucumber',
-            spec: firstSpec
+            spec: firstSpec,
+            specs: [firstSpec]
         })
     })
 })

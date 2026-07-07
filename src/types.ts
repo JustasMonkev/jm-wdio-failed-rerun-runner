@@ -83,10 +83,14 @@ export interface FailedRerunBrowserStackEnv {
 }
 
 export type RerunSpecPlan = MochaRerunSpecPlan | CucumberRerunSpecPlan
+export type RerunPlan = RerunSpecPlan
+export type MochaRerunPlan = MochaRerunSpecPlan
+export type CucumberRerunPlan = CucumberRerunSpecPlan
 
 interface RerunSpecPlanBase {
     framework: FailedRerunFramework
     spec: string
+    specs: string[]
     tests: FailedTestRecord[]
 }
 
@@ -113,6 +117,7 @@ export interface FailedRerunMochaRerunAttemptResult extends FailedRerunAttemptRe
     type: 'rerun'
     framework: 'mocha'
     spec: string
+    specs: string[]
     grep: string
 }
 
@@ -120,6 +125,7 @@ export interface FailedRerunCucumberRerunAttemptResult extends FailedRerunAttemp
     type: 'rerun'
     framework: 'cucumber'
     spec: string
+    specs: string[]
     name: string[]
 }
 
