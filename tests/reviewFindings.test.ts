@@ -9,7 +9,7 @@ import FailedTestRerunService, {
     createFailedTestsRerunner,
     runFailedTestsRerun
 } from '#src/index'
-import { readFailedTests } from '#src/manifest'
+import { readFailedTests, readManifest } from '#src/manifest'
 import type { FailedRerunRunArgs, FailedRerunServiceOptions, FailedTestRecord } from '#src/types'
 
 const tempDirs: string[] = []
@@ -1248,5 +1248,122 @@ describe('an unreadable scenario name costs one record, not the run', () => {
 
         expect((await readFailedTests(manifestPath)).map((record) => record.fullTitle))
             .toEqual(['signs out'])
+    })
+})
+
+describe('the retry guard applies only to something that will be retried', () => {
+    it('records a skip that also carries Mocha retry counters', async () => {
+        const manifestPath = path.join(await makeTempDir(), 'manifest.ndjson')
+        const previous = process.env.WDIO_WORKER_ID
+        const test = { title: 'signs in', fullTitle: 'login signs in', file: 'specs/login.e2e.ts' }
+
+        try {
+            process.env.WDIO_WORKER_ID = '0-0'
+            await new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+                .afterTest(test as never, {}, {
+                    passed: false,
+                    duration: 1,
+                    retries: { attempts: 0, limit: 0 }
+                } as never)
+
+            // The spec-file retry skipped the test. Mocha stamps its retry counters on every
+            // runnable, so with `mochaOpts.retries` configured this skip looks exactly like a
+            // first failed attempt awaiting a retry - but Mocha never retries a skipped test,
+            // so the guard must not swallow it.
+            process.env.WDIO_WORKER_ID = '0-1'
+            await new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+                .afterTest({ ...test, pending: true, _currentRetry: 0, _retries: 2 } as never, {}, {
+                    passed: false,
+                    duration: 0,
+                    retries: { attempts: 0, limit: 0 }
+                } as never)
+        } finally {
+            process.env.WDIO_WORKER_ID = previous
+        }
+
+        expect(await readFailedTests(manifestPath)).toEqual([])
+    })
+
+    it('still withholds a genuine failure that Mocha will retry', async () => {
+        const manifestPath = path.join(await makeTempDir(), 'manifest.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+
+        // The other direction: a real failure on a non-final attempt stays out of the
+        // manifest, so a test that recovers on a later retry is never queued for a rerun.
+        await service.afterTest({
+            title: 'signs in',
+            fullTitle: 'login signs in',
+            file: 'specs/login.e2e.ts',
+            _currentRetry: 0,
+            _retries: 2
+        } as never, {}, {
+            passed: false,
+            duration: 1,
+            retries: { attempts: 0, limit: 0 }
+        } as never)
+
+        expect(await readFailedTests(manifestPath)).toEqual([])
+    })
+
+    // `@wdio/cucumber-framework` currently maps SKIPPED to `passed: true`, so today the
+    // pass check alone would carry this. That mapping is upstream's to change, not ours to
+    // rely on, so the two signals are read independently: a scenario this code considers
+    // skipped is recorded whatever the retry flag says.
+    it.each([
+        ['reported as passed, the way the framework maps it today', true],
+        ['reported as not passed, should that mapping ever change', false]
+    ])('records a skipped scenario marked for retry when %s', async (_label, passed) => {
+        const manifestPath = path.join(await makeTempDir(), 'manifest.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+
+        await service.afterScenario({
+            pickle: { name: 'signs in', uri: 'features/login.feature' },
+            result: { status: 'SKIPPED' },
+            willBeRetried: true
+        } as never, { passed, duration: 0 } as never, {})
+
+        expect((await readManifest(manifestPath)).map((record) => record.outcome)).toEqual(['skipped'])
+    })
+})
+
+describe('a throwing result property cannot cost the failure record', () => {
+    function withThrowingGetter<T extends object>(target: T, key: string) {
+        Object.defineProperty(target, key, {
+            configurable: true,
+            get() {
+                throw new Error(`cannot read ${key}`)
+            }
+        })
+        return target
+    }
+
+    it.each(['passed', 'error'])('still records the failure when result.%s throws', async (key) => {
+        const manifestPath = path.join(await makeTempDir(), 'manifest.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+
+        await service.afterTest({
+            title: 'signs in',
+            fullTitle: 'login signs in',
+            file: 'specs/login.e2e.ts'
+        } as never, {}, withThrowingGetter({
+            duration: 1,
+            retries: { attempts: 0, limit: 0 }
+        }, key) as never)
+
+        expect((await readFailedTests(manifestPath)).map((record) => record.fullTitle))
+            .toEqual(['login signs in'])
+    })
+
+    it.each(['passed', 'error'])('still records the scenario failure when result.%s throws', async (key) => {
+        const manifestPath = path.join(await makeTempDir(), 'manifest.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+
+        await service.afterScenario({
+            pickle: { name: 'signs in', uri: 'features/login.feature' },
+            result: { status: 'FAILED' }
+        } as never, withThrowingGetter({ duration: 1 }, key) as never, {})
+
+        expect((await readFailedTests(manifestPath)).map((record) => record.fullTitle))
+            .toEqual(['signs in'])
     })
 })

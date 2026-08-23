@@ -36,15 +36,23 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
     // failure it replaced. A skip still proves nothing about the test, so it never counts
     // as evidence that a focused rerun executed what it targeted.
     async afterTest(test: Frameworks.Test, context: unknown, result: Frameworks.TestResult) {
-        // A passing test is never retried, so the retry guard must not apply to it.
-        if (!result.passed && willBeRetriedByWdio(test, result)) {
+        const passed = Boolean(readProperty(result, 'passed'))
+        const skipped = isSkipped(test, result)
+
+        // The retry guard exists to keep a non-final attempt out of the manifest, so it
+        // must only apply to something that will actually be retried. Neither a pass nor a
+        // skip is: Mocha stamps its retry counters on every runnable, so a skipped test can
+        // carry `_retries > 0` with `_currentRetry: 0` and look exactly like a first failed
+        // attempt. Returning there would drop the skip, leaving an earlier failure for the
+        // same test standing as the manifest's last word.
+        if (!passed && !skipped && willBeRetriedByWdio(test, result)) {
             return
         }
 
         await this.#appendRecord(createMochaFailedTestRecord(
             test,
             result,
-            this.#recordContext(result.passed, isSkipped(test, result)),
+            this.#recordContext(passed, skipped),
             context
         ))
     }
@@ -53,14 +61,17 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
     // at face value would let a rerun whose scenario was skipped - by a tag filter, or a
     // Before hook that skips - be reported as a recovery, turning a failing build green.
     async afterScenario(world: Frameworks.World, result: Frameworks.PickleResult, _context: unknown) {
-        if (!result.passed && willBeRetriedByWdioScenario(world)) {
+        const passed = Boolean(readProperty(result, 'passed'))
+        const skipped = isSkippedScenario(world)
+
+        if (!passed && !skipped && willBeRetriedByWdioScenario(world)) {
             return
         }
 
         await this.#appendRecord(createCucumberFailedScenarioRecord(
             world,
             result,
-            this.#recordContext(result.passed, isSkippedScenario(world))
+            this.#recordContext(passed, skipped)
         ))
     }
 

@@ -70,7 +70,7 @@ export function createMochaFailedTestRecord(
         title: test.title || parseNonEmptyString(readProperty(test, 'description')),
         cid: context.cid,
         ...passedOutcome(context),
-        error: serializeError(result.error)
+        error: serializeError(readProperty(result, 'error'))
     }
 }
 
@@ -94,7 +94,7 @@ export function createCucumberFailedScenarioRecord(
         title: scenarioName,
         cid: context.cid,
         ...passedOutcome(context),
-        error: serializeError(result.error)
+        error: serializeError(readProperty(result, 'error'))
     }
 }
 
