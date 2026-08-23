@@ -488,3 +488,179 @@ describe('serialization survives a hostile prototype chain', () => {
         expect(await readFailedTests(manifestPath)).toHaveLength(1)
     })
 })
+
+describe('an unreadable manifest can never be reported as passing', () => {
+    it('fails the run when a failure line was lost, even if the rest recovered', async () => {
+        const workspace = await makeTempDir()
+        const firstSpec = path.join(workspace, 'a.e2e.ts')
+        const secondSpec = path.join(workspace, 'b.e2e.ts')
+        const manifestPath = path.join(workspace, 'initial.ndjson')
+        let runs = 0
+
+        const result = await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace,
+            quiet: true,
+            manifestPath,
+            run: async (_configPath, args) => {
+                runs++
+                const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
+
+                if (runs === 1) {
+                    await service.afterTest({
+                        title: 'a',
+                        fullTitle: 'suite a',
+                        file: firstSpec
+                    } as never, {}, {
+                        passed: false,
+                        duration: 1,
+                        retries: { attempts: 0, limit: 0 }
+                    } as never)
+
+                    // A worker killed mid-write leaves the second failure half-recorded.
+                    await fs.appendFile(
+                        manifestPath,
+                        `{"attempt":"initial","framework":"mocha","spec":"${secondSpec}","fullTi\n`
+                    )
+                    return 1
+                }
+
+                await service.afterTest({
+                    title: 'a',
+                    fullTitle: 'suite a',
+                    file: firstSpec
+                } as never, {}, {
+                    passed: true,
+                    duration: 1,
+                    retries: { attempts: 0, limit: 0 }
+                } as never)
+                return 0
+            }
+        })
+
+        // Skipping the bad line keeps the run alive, but the failure it described was
+        // never retried, so success cannot be claimed.
+        expect(result.exitCode).toBe(1)
+        expect(result.summary.flaky.map((test) => test.fullTitle)).toEqual(['suite a'])
+    })
+
+    it('fails a run that exited zero when a manifest line was lost', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'initial.ndjson')
+
+        const result = await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace,
+            quiet: true,
+            manifestPath,
+            run: async () => {
+                // The framework reported success, but a worker died mid-write. Whatever
+                // that line said is unknowable, so success cannot be claimed.
+                await fs.mkdir(path.dirname(manifestPath), { recursive: true })
+                await fs.appendFile(manifestPath, '{"attempt":"initial","framework":"moc\n')
+                return 0
+            }
+        })
+
+        expect(result.exitCode).toBe(1)
+    })
+
+    it('says why the run was failed', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'initial.ndjson')
+        const lines: string[] = []
+
+        await createFailedTestsRerunner({ logger: { log: (message) => lines.push(message) } }).run(
+            path.join(workspace, 'wdio.conf.ts'),
+            {
+                cwd: workspace,
+                manifestPath,
+                run: async () => {
+                    await fs.mkdir(path.dirname(manifestPath), { recursive: true })
+                    await fs.appendFile(manifestPath, 'not json at all\n')
+                    return 1
+                }
+            }
+        )
+
+        expect(lines.some((line) => line.includes('could not be read'))).toBe(true)
+    })
+})
+
+describe('failures first seen during a rerun are reported', () => {
+    it('reports a capability that newly fails, so the summary matches the exit code', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'login.e2e.ts')
+        const previous = process.env.WDIO_WORKER_ID
+        let runs = 0
+
+        const record = async (args: FailedRerunRunArgs, cid: string, passed: boolean) => {
+            process.env.WDIO_WORKER_ID = cid
+            const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
+            await service.afterTest({
+                title: 'signs in',
+                fullTitle: 'login signs in',
+                file: spec
+            } as never, {}, {
+                passed,
+                duration: 1,
+                retries: { attempts: 0, limit: 0 }
+            } as never)
+        }
+
+        try {
+            const result = await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+                cwd: workspace,
+                quiet: true,
+                run: async (_configPath, args) => {
+                    runs++
+
+                    if (runs === 1) {
+                        await record(args, '0-0', false)
+                        return 1
+                    }
+
+                    // The rerun launches the spec under every capability, so one that
+                    // passed initially can fail here for the first time.
+                    await record(args, '0-0', true)
+                    await record(args, '1-0', false)
+                    return 1
+                }
+            })
+
+            expect(result.exitCode).toBe(1)
+            expect(result.summary.flaky).toHaveLength(1)
+            expect(result.summary.broken).toHaveLength(1)
+            expect(result.summary.broken[0].cid).toBe('1-0')
+        } finally {
+            if (previous === undefined) {
+                delete process.env.WDIO_WORKER_ID
+            } else {
+                process.env.WDIO_WORKER_ID = previous
+            }
+        }
+    })
+})
+
+describe('serialization survives a revoked proxy', () => {
+    it('records the failure when a revoked Proxy is an error detail', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'failures.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+        const { proxy, revoke } = Proxy.revocable({}, {})
+        revoke()
+
+        // A revoked Proxy answers the guarded isError check safely but throws from
+        // Array.isArray, which sits before the traversal.
+        await expect(service.afterTest(
+            { title: 't', fullTitle: 'suite t', file: 'specs/a.e2e.ts' } as never,
+            {},
+            {
+                passed: false,
+                duration: 1,
+                error: Object.assign(new Error('boom'), { dead: proxy }),
+                retries: { attempts: 0, limit: 0 }
+            } as never
+        )).resolves.toBeUndefined()
+
+        expect(await readFailedTests(manifestPath)).toHaveLength(1)
+    })
+})

@@ -89,6 +89,10 @@ export interface FailedTestManifestStore {
     // filter matched nothing", so execution verification is skipped and a rerun that ran
     // no tests will be reported as a pass. Implement it whenever that matters.
     readAll?(manifestPath: string): Promise<FailedTestRecord[]>
+    // How many lines could not be read. A store that omits this is assumed to lose
+    // nothing; the built-in filesystem store reports partial writes so the runner can
+    // refuse to report success for a failure it can no longer see.
+    countUnreadable?(manifestPath: string): Promise<number>
 }
 
 export interface FailedRerunRetryEnv {

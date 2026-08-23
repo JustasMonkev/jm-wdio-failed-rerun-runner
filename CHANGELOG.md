@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     indistinguishable from "everything passed", so a filter matching zero tests
     produced exit code `0`. Reruns now record executed tests, and a targeted test
     that never ran is a hard failure reported in `notExecuted`.
+- **A lost manifest line could turn a failing run green.** Skipping an unreadable line
+  keeps one bad write from destroying the whole run, but the failure it described then
+  became invisible: the surviving failures were rerun, passed, and the run exited `0`
+  while the lost test was never retried. Unreadable lines are now counted and reported,
+  and a run that lost one can never be reported as passing.
+- **Failures first seen during a rerun were missing from the summary.** A rerun launches
+  the spec under every configured capability, so it can surface failures the initial run
+  never reported; those kept the run red while the summary said `0 still failing`.
+- **A revoked Proxy could still escape error serialization**, throwing from
+  `Array.isArray` after the prototype check was guarded.
 - **One capability's pass vouched for another that never ran.** Execution evidence was
   matched on framework, spec and title alone, so when the same test failed under two
   capabilities and only one reran and passed, both were treated as recovered and the run

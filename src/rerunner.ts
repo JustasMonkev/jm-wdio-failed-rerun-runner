@@ -7,6 +7,7 @@ import { processBrowserStackEnv } from '#src/browserstack'
 import { runWdio } from '#src/launcher'
 import {
     appendFailedTest,
+    countUnreadableLines,
     dedupeFailedTests,
     getExecutionKey,
     readFailedTests,
@@ -18,6 +19,7 @@ import {
     consoleLogger,
     reportInitialFailures,
     reportRerunStart,
+    reportUnreadableManifest,
     reportSummary,
     summarize
 } from '#src/reporter'
@@ -41,6 +43,8 @@ import type {
 
 interface RerunSettings {
     args: FailedRerunRunArgs
+    // Accumulates manifest lines that could not be read, across every attempt.
+    unreadable: { lines: number }
     logger: FailedRerunLogger
     browserstackEnv: FailedRerunBrowserStackEnv
     cwd: string
@@ -82,7 +86,8 @@ const fileSystemManifestStore: FailedTestManifestStore = {
     reset: resetManifest,
     read: readFailedTests,
     readAll: readManifest,
-    append: appendFailedTest
+    append: appendFailedTest,
+    countUnreadable: countUnreadableLines
 }
 
 const processRetryEnv: FailedRerunRetryEnv = {
@@ -111,8 +116,10 @@ async function runFailedTestsRerunWithDeps(
     const attempts: FailedRerunAttemptResult[] = [initialAttempt]
 
     if (!shouldRerun(initialAttempt, settings.maxReruns)) {
+        reportUnreadableManifest(settings.unreadable.lines, settings.logger)
+
         return createResult(
-            initialAttempt.exitCode,
+            settings.unreadable.lines > 0 ? initialAttempt.exitCode || 1 : initialAttempt.exitCode,
             attempts,
             initialAttempt.failures,
             summarize(initialAttempt.failures, attempts)
@@ -128,9 +135,11 @@ async function runFailedTestsRerunWithDeps(
         attempts,
         reruns,
         settings.passOnSuccessfulRerun,
-        summarize(initialAttempt.failures, attempts)
+        summarize(initialAttempt.failures, attempts),
+        settings.unreadable.lines
     )
 
+    reportUnreadableManifest(settings.unreadable.lines, settings.logger)
     reportSummary(result, settings.logger)
 
     return result
@@ -144,6 +153,7 @@ function createRerunSettings(
 
     return {
         args: options.args || {},
+        unreadable: { lines: 0 },
         browserstackEnv: deps.browserstackEnv || processBrowserStackEnv,
         cwd,
         manifestPath: resolveManifestPath(options.manifestPath, cwd, 'initial'),
@@ -271,6 +281,7 @@ async function runRerunPlan(
             () => normalizeExitCode(settings.run(configPath, createRerunArgs(settings.args, plan, manifestPath)))
         )
     )
+    await countUnreadable(settings, manifestPath)
     const { records, canVerifyExecution } = await readRerunRecords(settings, manifestPath)
     const notExecuted = canVerifyExecution ? findTestsThatDidNotRun(plan, records) : []
     const failures = dedupeFailedTests(records.filter((record) => record.outcome !== 'passed'))
@@ -368,9 +379,15 @@ function createRerunResult(
     attempts: FailedRerunAttemptResult[],
     reruns: RerunSummary,
     passOnSuccessfulRerun: boolean,
-    summary: FailedRerunSummary
+    summary: FailedRerunSummary,
+    unreadableLines: number
 ) {
-    const rerunsPassed = !reruns.hadHardFailure && reruns.failures.length === 0 && reruns.lastExitCode === 0
+    // A manifest we could not fully read may have described a failure that is now
+    // invisible, so nothing here proves the suite is healthy.
+    const rerunsPassed = unreadableLines === 0
+        && !reruns.hadHardFailure
+        && reruns.failures.length === 0
+        && reruns.lastExitCode === 0
     const exitCode = getFinalExitCode(rerunsPassed, initialExitCode, passOnSuccessfulRerun)
 
     return createResult(exitCode, attempts, reruns.failures, summary)
@@ -427,7 +444,13 @@ function withFailureService(args: FailedRerunRunArgs, options: {
 }
 
 async function readManifestFailures(settings: RerunSettings, manifestPath: string) {
+    await countUnreadable(settings, manifestPath)
     return dedupeFailedTests(await settings.manifests.read(manifestPath))
+}
+
+async function countUnreadable(settings: RerunSettings, manifestPath: string) {
+    const count = await settings.manifests.countUnreadable?.(manifestPath)
+    settings.unreadable.lines += count ?? 0
 }
 
 // `--rerun-manifest-path` is documented as a build artifact, so the literal path the user

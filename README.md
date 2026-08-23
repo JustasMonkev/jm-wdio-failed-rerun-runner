@@ -147,6 +147,11 @@ build green.
 Custom `manifests` adapters that do not implement `readAll` cannot report passed tests, so
 execution cannot be verified for them and this protection is skipped.
 
+A manifest line that cannot be read is skipped rather than aborting the run, but the
+failure it described is then invisible. The runner counts such lines, reports them, and
+refuses to report the run as passing, since a test it can no longer see may still be
+failing. Custom adapters signal this through the optional `countUnreadable` method.
+
 Recorded errors preserve standard `Error` fields plus serializable `cause` and custom enumerable properties. This keeps the manifest useful for diagnostics without allowing non-JSON values to break writes.
 
 ## Known Limitations

@@ -150,6 +150,9 @@ function toJsonValue(value: unknown, seen: WeakSet<object>, depth = 0): FailedRe
     seen.add(value)
 
     try {
+        // A revoked Proxy answers isError safely but throws from Array.isArray, and a
+        // hostile object's traversal can throw too. The catch below covers both: nothing
+        // about an error's payload may cost us the failure record.
         if (Array.isArray(value)) {
             return value.map((item) => toJsonValue(item, seen, depth + 1) ?? null)
         }
@@ -163,6 +166,8 @@ function toJsonValue(value: unknown, seen: WeakSet<object>, depth = 0): FailedRe
         }
 
         return output
+    } catch {
+        return '[Unreadable]'
     } finally {
         seen.delete(value)
     }

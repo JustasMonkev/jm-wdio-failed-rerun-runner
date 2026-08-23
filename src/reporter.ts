@@ -34,6 +34,7 @@ export function summarize(
     // report a test that later recovered as broken while the run exits 0.
     const latest = new Map<string, 'failed' | 'passed' | 'noResult'>()
     const noResultRecords = new Map<string, FailedTestRecord>()
+    const failedRecords = new Map<string, FailedTestRecord>()
 
     for (const attempt of attempts) {
         if (attempt.type !== 'rerun') {
@@ -59,12 +60,23 @@ export function summarize(
             noResultRecords.delete(key)
             latest.set(key, failed.has(key) ? 'failed' : 'passed')
         }
+
+        // A rerun launches the spec under every configured capability, so it can surface
+        // failures the initial run never reported. They keep the run red, so leaving them
+        // out would make the summary contradict the exit code.
+        for (const record of attempt.failures) {
+            const key = getFailureKeyForSummary(record)
+            failedRecords.set(key, record)
+            latest.set(key, 'failed')
+        }
     }
 
     const flaky: FailedTestRecord[] = []
     const broken: FailedTestRecord[] = []
+    const classified = new Set<string>()
 
     for (const record of initialFailures) {
+        classified.add(getFailureKeyForSummary(record))
         // A test no rerun ever targeted - `maxReruns: 0`, or a round that stopped early -
         // recovered from nothing, so it is neither flaky nor proven broken.
         switch (latest.get(getFailureKeyForSummary(record))) {
@@ -76,6 +88,12 @@ export function summarize(
                 break
             default:
                 break
+        }
+    }
+
+    for (const [key, record] of failedRecords) {
+        if (!classified.has(key) && latest.get(key) === 'failed') {
+            broken.push(record)
         }
     }
 
@@ -101,6 +119,14 @@ export function reportRerunStart(
         .map((plan) => `${basename(plan.spec)} (${count(plan.tests.length, 'test')})`)
         .join(', ')
     logger.log(`${PREFIX} rerun ${round + 1}/${maxReruns}: ${specs}`)
+}
+
+export function reportUnreadableManifest(lines: number, logger: FailedRerunLogger) {
+    if (lines === 0) {
+        return
+    }
+
+    logger.log(`${PREFIX} ${count(lines, 'manifest line')} could not be read: a failure may be missing, so this run cannot be reported as passing`)
 }
 
 export function reportSummary(result: FailedRerunResult, logger: FailedRerunLogger) {

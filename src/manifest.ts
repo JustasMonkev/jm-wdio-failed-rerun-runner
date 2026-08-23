@@ -30,6 +30,26 @@ export async function readFailedTests(manifestPath: string): Promise<FailedTestR
     return (await readManifest(manifestPath)).filter((record) => record.outcome !== 'passed')
 }
 
+// Skipping an unreadable line keeps one bad write from destroying the whole run, but the
+// failure it described is then invisible: rerunning only what survived and passing would
+// report success for a test that was never retried. The caller needs to know the manifest
+// was incomplete so it can refuse to call the run green.
+export async function countUnreadableLines(manifestPath: string): Promise<number> {
+    try {
+        const content = await fs.readFile(manifestPath, 'utf8')
+        return content
+            .split('\n')
+            .filter(Boolean)
+            .filter((line) => !parseManifestLine(line))
+            .length
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            return 0
+        }
+        throw error
+    }
+}
+
 // A worker killed mid-write, a full disk, or an unrelated process appending to the
 // manifest would otherwise abort the whole rerun. A manifest is diagnostic data, so a
 // line we cannot read is skipped rather than allowed to destroy the run.
