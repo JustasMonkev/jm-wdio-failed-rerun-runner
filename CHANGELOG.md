@@ -1,0 +1,59 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Fixed
+
+- **Focused reruns could report a green build without running any tests.** Three
+  defects compounded into one failure mode:
+  - Mocha full titles were truncated to the immediate `describe`. WebdriverIO
+    hands `afterTest` a spread of the Mocha test object, which drops `fullTitle`
+    (a prototype method) and reduces `parent` to the immediate suite title, so
+    the generated `mochaOpts.grep` could not match the title Mocha filters on.
+    Any suite nesting `describe` blocks reran nothing.
+  - Cucumber filters could not survive the worker boundary. WebdriverIO forwards
+    launcher arguments with `childProcess.send()`, which serializes as JSON, so
+    the `RegExp` objects in `cucumberOpts.name` arrived as `{}` and matched no
+    scenarios. They are now the anchored strings WebdriverIO documents.
+  - Nothing verified that a rerun ran what it targeted. An empty manifest is
+    indistinguishable from "everything passed", so a filter matching zero tests
+    produced exit code `0`. Reruns now record executed tests, and a targeted test
+    that never ran is a hard failure reported in `notExecuted`.
+- `serializeError` reported a shared non-cyclic object as `[Circular]` the second
+  time it appeared, discarding real diagnostic data.
+- A single malformed manifest line aborted the entire rerun; unreadable lines are
+  now skipped.
+- A missing config path produced a module-resolution stack trace naming an
+  internal wrapper temp file; it is now one clear line.
+- `repository.url` named the wrong GitHub owner, breaking the npm page link and
+  npm provenance.
+- Published sourcemaps were dangling: they reference `../src/*.ts`, which was not
+  in the tarball. `src` now ships.
+- `npm run coverage`, and therefore `npm run check`, failed on a clean checkout
+  because tests import `#src/*`, which resolves to `build/*.js`.
+
+### Added
+
+- Rerun progress output and a closing summary separating tests that recovered
+  (`flaky`) from tests that stayed broken (`broken`), plus `notExecuted`. The same
+  breakdown is exposed on `result.summary`; `--quiet` silences it.
+- `-q` / `--quiet` CLI flag and a `quiet` option.
+- A CI workflow covering Node 20/22/24 on Linux plus Windows and macOS, and an
+  end-to-end job running the example project.
+- Dependabot configuration and coverage thresholds.
+
+### Changed
+
+- Dependencies updated to their latest compatible versions. TypeScript is held at
+  `^6.0.3` because `typescript-eslint@8.67.0` declares a `typescript >=4.8.4 <6.1.0`
+  peer range.
+
+## [0.0.1]
+
+- Initial release: run a WebdriverIO suite, record failures to an NDJSON manifest,
+  and rerun only the failed tests with framework-specific exact-title filters.

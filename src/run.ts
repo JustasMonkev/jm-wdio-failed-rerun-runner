@@ -2,6 +2,7 @@ import path from 'node:path'
 
 import * as z from 'zod'
 
+import { FailedRerunUsageError } from '#src/errors'
 import { runFailedTestsRerun } from '#src/rerunner'
 
 const nonNegativeIntegerStringSchema = z.string().transform((value, context) => {
@@ -82,7 +83,7 @@ export default async function run(argv = process.argv.slice(2)) {
         }
         return result.exitCode
     } catch (error) {
-        console.error(error)
+        console.error(error instanceof FailedRerunUsageError ? error.message : error)
         if (!process.env.WDIO_UNIT_TESTS) {
             process.exit(1)
         }

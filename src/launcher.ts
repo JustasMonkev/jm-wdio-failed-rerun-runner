@@ -4,6 +4,7 @@ import fs from 'node:fs/promises'
 
 import * as z from 'zod'
 
+import { FailedRerunUsageError } from '#src/errors'
 import { jsonSerializableValueSchema } from '#src/schemas'
 import type {
     FailedRerunRun,
@@ -49,6 +50,11 @@ async function importWdioCli(): Promise<WdioCliModule> {
 }
 
 async function runWithWdioLauncher(Launcher: LauncherConstructor, configPath: string, args: FailedRerunRunArgs) {
+    // Check before writing the wrapper: otherwise a mistyped config path surfaces as a
+    // module-resolution stack trace naming an internal `.wdio-failed-rerun-*` temp file
+    // the user never created, or as a raw ENOENT from writing the wrapper itself.
+    await assertConfigExists(configPath)
+
     if (!args.services?.length) {
         return new Launcher(configPath, args).run()
     }
@@ -69,6 +75,14 @@ async function runWithWdioLauncher(Launcher: LauncherConstructor, configPath: st
 // `[injectedService, 'chromedriver']`. That would break any service configured with options -
 // including `@wdio/browserstack-service`, which this package explicitly supports. Wrapping the
 // config instead leaves the user's `services` array untouched. Keep it that way.
+async function assertConfigExists(configPath: string) {
+    try {
+        await fs.access(configPath)
+    } catch {
+        throw new FailedRerunUsageError(`WebdriverIO config not found: ${configPath}`)
+    }
+}
+
 async function createConfigWithExtraServices(configPath: string, services: NonNullable<FailedRerunRunArgs['services']>) {
     const configDirectory = path.dirname(configPath)
     const configExtension = path.extname(configPath)

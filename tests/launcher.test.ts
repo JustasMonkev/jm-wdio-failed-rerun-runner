@@ -30,18 +30,25 @@ describe('WDIO launcher adapter', () => {
         const run = createWdioRun(async () => ({
             Launcher: FakeLauncher
         }))
+        const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wdio-launcher-'))
+        const configPath = path.join(workspace, 'wdio.conf.ts')
+        await fs.writeFile(configPath, 'export const config = {}\n')
 
-        await expect(run('/repo/wdio.conf.ts', {
-            spec: ['/repo/spec.e2e.ts']
-        })).resolves.toBe(17)
-        expect(calls).toEqual([
-            {
-                configPath: '/repo/wdio.conf.ts',
-                args: {
-                    spec: ['/repo/spec.e2e.ts']
+        try {
+            await expect(run(configPath, {
+                spec: ['/repo/spec.e2e.ts']
+            })).resolves.toBe(17)
+            expect(calls).toEqual([
+                {
+                    configPath,
+                    args: {
+                        spec: ['/repo/spec.e2e.ts']
+                    }
                 }
-            }
-        ])
+            ])
+        } finally {
+            await fs.rm(workspace, { recursive: true, force: true })
+        }
     })
 
     it('appends launcher-arg services through a wrapper config', async () => {
@@ -99,5 +106,14 @@ describe('WDIO launcher adapter', () => {
         })
 
         await fs.rm(workspace, { recursive: true, force: true })
+    })
+
+    it('reports a missing config as a usage error, not a wrapper-file stack trace', async () => {
+        const { runWdio } = await import('#src/launcher')
+        const missing = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'wdio-missing-')), 'wdio.conf.ts')
+
+        // Without a pre-flight check this surfaces as ERR_MODULE_NOT_FOUND naming an
+        // internal `.wdio-failed-rerun-*` temp file the user never created.
+        await expect(runWdio(missing, {})).rejects.toThrow(`WebdriverIO config not found: ${missing}`)
     })
 })

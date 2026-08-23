@@ -3,6 +3,15 @@ import type {
     FailedTestError
 } from '#src/types'
 
+// Signals a mistake in how the runner was invoked, rather than a fault inside it.
+// The CLI prints these as a single line instead of a stack trace.
+export class FailedRerunUsageError extends Error {
+    constructor(message: string) {
+        super(message)
+        this.name = 'FailedRerunUsageError'
+    }
+}
+
 export function serializeError(error: unknown, seen = new WeakSet<object>()): FailedTestError | undefined {
     if (typeof error === 'string' && error) {
         return {
