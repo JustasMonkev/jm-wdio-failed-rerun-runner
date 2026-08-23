@@ -21,10 +21,14 @@ export function buildExactTitleGrep(fullTitles: string[]) {
     return `^(?:${uniqueTitles.map(escapeRegExp).join('|')})$`
 }
 
-export function buildExactTitleRegExps(fullTitles: string[]) {
+// Cucumber's `name` filter is typed `string[]` and is handed to the launcher, which
+// forwards it to worker processes over `childProcess.send()`. That uses Node's default
+// JSON serialization, so a RegExp would arrive in the worker as `{}` and match nothing.
+// Anchored strings survive the trip and are what WebdriverIO documents.
+export function buildExactTitleFilters(fullTitles: string[]) {
     return Array.from(new Set(fullTitles))
         .sort()
-        .map((title) => new RegExp(`^${escapeRegExp(title)}$`))
+        .map((title) => `^${escapeRegExp(title)}$`)
 }
 
 function escapeRegExp(value: string) {

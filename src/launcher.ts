@@ -62,6 +62,13 @@ async function runWithWdioLauncher(Launcher: LauncherConstructor, configPath: st
     }
 }
 
+// Services cannot be injected through launcher args. WebdriverIO's ConfigParser merges
+// `services` with a custom array strategy that keeps `oldValue.filter(v => typeof v !== 'object')`,
+// so passing `args.services` SILENTLY DROPS every tuple-form service already configured in the
+// user's own config: a config declaring `['chromedriver', ['browserstack', {...}]]` comes back as
+// `[injectedService, 'chromedriver']`. That would break any service configured with options -
+// including `@wdio/browserstack-service`, which this package explicitly supports. Wrapping the
+// config instead leaves the user's `services` array untouched. Keep it that way.
 async function createConfigWithExtraServices(configPath: string, services: NonNullable<FailedRerunRunArgs['services']>) {
     const configDirectory = path.dirname(configPath)
     const configExtension = path.extname(configPath)

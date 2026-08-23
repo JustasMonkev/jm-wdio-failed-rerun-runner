@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url'
 
 import { processBrowserStackEnv } from '#src/browserstack'
 import { runWdio } from '#src/launcher'
-import { readFailedTests, resetManifest } from '#src/manifest'
-import { buildExactTitleRegExps, createRerunSpecPlans } from '#src/planner'
+import { dedupeFailedTests, getFailureKey, readFailedTests, readManifest, resetManifest } from '#src/manifest'
+import { buildExactTitleFilters, createRerunSpecPlans } from '#src/planner'
 import type {
     FailedRerunAttemptResult,
     FailedRerunAttemptType,
@@ -58,7 +58,8 @@ export const FAILED_RERUN_SERVICE_PATH = fileURLToPath(new URL('./index.js', imp
 
 const fileSystemManifestStore: FailedTestManifestStore = {
     reset: resetManifest,
-    read: readFailedTests
+    read: readFailedTests,
+    readAll: readManifest
 }
 
 const processRetryEnv: FailedRerunRetryEnv = {
@@ -206,11 +207,14 @@ async function runRerunPlan(
             () => normalizeExitCode(settings.run(configPath, createRerunArgs(settings.args, plan, manifestPath)))
         )
     )
-    const failures = await readManifestFailures(settings, manifestPath)
+    const { records, canVerifyExecution } = await readRerunRecords(settings, manifestPath)
+    const notExecuted = canVerifyExecution ? findTestsThatDidNotRun(plan, records) : []
+    const failures = dedupeFailedTests(records.filter((record) => record.outcome !== 'passed'))
 
     const rerunAttempt = {
-        exitCode,
+        exitCode: notExecuted.length > 0 ? exitCode || 1 : exitCode,
         failures,
+        notExecuted,
         spec: plan.spec,
         specs: plan.specs,
         type: 'rerun' as const
@@ -227,7 +231,7 @@ async function runRerunPlan(
     return {
         ...rerunAttempt,
         framework: 'cucumber',
-        name: buildExactTitleRegExps(plan.tests.map((test) => test.fullTitle)).map(String)
+        name: buildExactTitleFilters(plan.tests.map((test) => test.fullTitle))
     }
 }
 
@@ -259,12 +263,16 @@ function createCucumberRerunArgs(baseArgs: FailedRerunRunArgs, plan: Extract<Rer
         spec: plan.specs,
         cucumberOpts: {
             ...(baseArgs.cucumberOpts || {}),
-            name: buildExactTitleRegExps(plan.tests.map((test) => test.fullTitle))
+            name: buildExactTitleFilters(plan.tests.map((test) => test.fullTitle))
         }
     }
 }
 
 function isHardFailure(attempt: FailedRerunAttemptResult) {
+    if (attempt.type === 'rerun' && attempt.notExecuted.length > 0) {
+        return true
+    }
+
     return attempt.exitCode !== 0 && attempt.failures.length === 0
 }
 
@@ -328,24 +336,29 @@ async function readManifestFailures(settings: RerunSettings, manifestPath: strin
     return dedupeFailedTests(await settings.manifests.read(manifestPath))
 }
 
-function dedupeFailedTests(records: FailedTestRecord[]) {
-    const seen = new Set<string>()
-    const deduped: FailedTestRecord[] = []
-
-    for (const record of records) {
-        const key = getFailureKey(record)
-        if (seen.has(key)) {
-            continue
+async function readRerunRecords(settings: RerunSettings, manifestPath: string) {
+    const readAll = settings.manifests.readAll?.bind(settings.manifests)
+    if (!readAll) {
+        return {
+            records: await settings.manifests.read(manifestPath),
+            canVerifyExecution: false
         }
-        seen.add(key)
-        deduped.push(record)
     }
 
-    return deduped
+    return {
+        records: await readAll(manifestPath),
+        canVerifyExecution: true
+    }
 }
 
-function getFailureKey(record: FailedTestRecord) {
-    return `${record.framework}\0${record.spec}\0${record.fullTitle}`
+// A focused rerun narrows the run with a title filter. If that filter matches nothing -
+// a stale or mis-reconstructed title, a spec the config excludes, an unresolvable path -
+// the framework exits 0 having run no tests, and an empty manifest is indistinguishable
+// from "everything passed". Treating that as success turns a red build green, so a test
+// the rerun never executed stays a failure.
+function findTestsThatDidNotRun(plan: RerunPlan, records: FailedTestRecord[]) {
+    const executed = new Set(records.map(getFailureKey))
+    return plan.tests.filter((test) => !executed.has(getFailureKey(test)))
 }
 
 async function normalizeExitCode(exitCode: ReturnType<FailedRerunRun>) {

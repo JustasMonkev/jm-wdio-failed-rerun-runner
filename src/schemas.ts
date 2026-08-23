@@ -9,6 +9,7 @@ import type {
 
 export const failedRerunAttemptTypeSchema = z.enum(['initial', 'rerun'])
 export const failedRerunFrameworkSchema = z.enum(['mocha', 'cucumber'])
+export const failedRerunOutcomeSchema = z.enum(['failed', 'passed'])
 
 export const failedRerunJsonValueSchema: z.ZodType<FailedRerunJsonValue> = z.lazy(() => z.union([
     z.string(),
@@ -34,6 +35,7 @@ export const failedTestRecordSchema: z.ZodType<FailedTestRecord> = z.object({
     fullTitle: z.string().min(1),
     title: z.string().optional(),
     cid: z.string().optional(),
+    outcome: failedRerunOutcomeSchema.optional(),
     error: failedTestErrorSchema.optional()
 }).strict()
 

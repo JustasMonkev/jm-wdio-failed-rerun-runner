@@ -1,6 +1,7 @@
 import type { Services } from '@wdio/types'
 
 export type FailedRerunAttemptType = 'initial' | 'rerun'
+export type FailedRerunOutcome = 'failed' | 'passed'
 export type FailedRerunFramework = 'mocha' | 'cucumber'
 export type FailedRerunJsonValue =
     | string
@@ -17,6 +18,9 @@ export interface FailedTestRecord {
     fullTitle: string
     title?: string
     cid?: string
+    // Absent on manifests written before outcome tracking existed; those only ever
+    // contained failures, so a missing value reads as 'failed'.
+    outcome?: FailedRerunOutcome
     error?: FailedTestError
 }
 
@@ -37,9 +41,7 @@ export interface FailedRerunRunArgs {
     spec?: string[]
     services?: Services.ServiceEntry[]
     mochaOpts?: WebdriverIO.MochaOpts
-    cucumberOpts?: WebdriverIO.CucumberOpts & {
-        name?: RegExp[]
-    }
+    cucumberOpts?: WebdriverIO.CucumberOpts
     [key: string]: unknown
 }
 
@@ -72,6 +74,12 @@ export interface FailedTestsRerunnerDeps {
 export interface FailedTestManifestStore {
     reset(manifestPath: string): Promise<void>
     read(manifestPath: string): Promise<FailedTestRecord[]>
+    // Every record a rerun wrote, passed ones included, so the runner can prove which
+    // targeted tests actually executed. Optional so existing custom stores keep compiling,
+    // but a store that omits it CANNOT distinguish "the rerun passed" from "the rerun's
+    // filter matched nothing", so execution verification is skipped and a rerun that ran
+    // no tests will be reported as a pass. Implement it whenever that matters.
+    readAll?(manifestPath: string): Promise<FailedTestRecord[]>
 }
 
 export interface FailedRerunRetryEnv {
@@ -118,6 +126,8 @@ export interface FailedRerunMochaRerunAttemptResult extends FailedRerunAttemptRe
     framework: 'mocha'
     spec: string
     specs: string[]
+    // Targeted tests the rerun never executed, i.e. tests the filter failed to match.
+    notExecuted: FailedTestRecord[]
     grep: string
 }
 
@@ -126,6 +136,7 @@ export interface FailedRerunCucumberRerunAttemptResult extends FailedRerunAttemp
     framework: 'cucumber'
     spec: string
     specs: string[]
+    notExecuted: FailedTestRecord[]
     name: string[]
 }
 

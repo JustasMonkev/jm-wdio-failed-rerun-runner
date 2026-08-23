@@ -28,26 +28,53 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
         this.config = config
     }
 
-    async afterTest(test: Frameworks.Test, _context: unknown, result: Frameworks.TestResult) {
-        if (result.passed || willBeRetriedByWdio(result)) {
+    async afterTest(test: Frameworks.Test, context: unknown, result: Frameworks.TestResult) {
+        if (willBeRetriedByWdio(result)) {
             return
         }
 
-        await this.#appendRecord(createMochaFailedTestRecord(test, result, this.#recordContext()))
+        if (result.passed && !this.#recordsPassedTests()) {
+            return
+        }
+
+        await this.#appendRecord(createMochaFailedTestRecord(
+            test,
+            result,
+            this.#recordContext(result.passed),
+            context
+        ))
     }
 
     async afterScenario(world: Frameworks.World, result: Frameworks.PickleResult, _context: unknown) {
-        if (result.passed || willBeRetriedByWdioScenario(world)) {
+        if (willBeRetriedByWdioScenario(world)) {
             return
         }
 
-        await this.#appendRecord(createCucumberFailedScenarioRecord(world, result, this.#recordContext()))
+        if (result.passed && !this.#recordsPassedTests()) {
+            return
+        }
+
+        await this.#appendRecord(createCucumberFailedScenarioRecord(
+            world,
+            result,
+            this.#recordContext(result.passed)
+        ))
     }
 
-    #recordContext() {
+    // During a focused rerun the runner must be able to prove that the tests it
+    // targeted actually executed: a filter that matches nothing produces an empty
+    // manifest, which is indistinguishable from "everything passed". Recording
+    // passed tests too is only affordable here because a rerun's test set is small
+    // by construction, so the initial run still records failures only.
+    #recordsPassedTests() {
+        return this.options.attempt === 'rerun'
+    }
+
+    #recordContext(passed?: boolean) {
         return {
             attempt: this.options.attempt || 'initial',
-            cid: process.env.WDIO_WORKER_ID
+            cid: process.env.WDIO_WORKER_ID,
+            outcome: passed ? 'passed' as const : 'failed' as const
         }
     }
 

@@ -20,26 +20,33 @@ export function serializeError(error: unknown, seen = new WeakSet<object>()): Fa
         }
     }
 
+    // `seen` tracks the ANCESTOR PATH, not every object ever visited. Leaving entries
+    // behind would report a value merely reachable twice - two properties pointing at
+    // one shared object, say - as circular, silently dropping real diagnostic data.
     seen.add(error)
 
-    const err = error as Error
-    const serialized: FailedTestError = {
-        name: err.name,
-        message: err.message,
-        stack: err.stack
-    }
+    try {
+        const err = error as Error
+        const serialized: FailedTestError = {
+            name: err.name,
+            message: err.message,
+            stack: err.stack
+        }
 
-    const cause = toJsonValue(readProperty(error, 'cause'), seen)
-    if (cause !== undefined) {
-        serialized.cause = cause
-    }
+        const cause = toJsonValue(readProperty(error, 'cause'), seen)
+        if (cause !== undefined) {
+            serialized.cause = cause
+        }
 
-    const details = getErrorDetails(error, seen)
-    if (Object.keys(details).length > 0) {
-        serialized.details = details
-    }
+        const details = getErrorDetails(error, seen)
+        if (Object.keys(details).length > 0) {
+            serialized.details = details
+        }
 
-    return serialized
+        return serialized
+    } finally {
+        seen.delete(error)
+    }
 }
 
 function getErrorDetails(error: object, seen: WeakSet<object>) {
@@ -82,19 +89,23 @@ function toJsonValue(value: unknown, seen: WeakSet<object>): FailedRerunJsonValu
 
     seen.add(value)
 
-    if (Array.isArray(value)) {
-        return value.map((item) => toJsonValue(item, seen) ?? null)
-    }
-
-    const output: Record<string, FailedRerunJsonValue> = {}
-    for (const [key, entryValue] of Object.entries(value)) {
-        const jsonValue = toJsonValue(entryValue, seen)
-        if (jsonValue !== undefined) {
-            output[key] = jsonValue
+    try {
+        if (Array.isArray(value)) {
+            return value.map((item) => toJsonValue(item, seen) ?? null)
         }
-    }
 
-    return output
+        const output: Record<string, FailedRerunJsonValue> = {}
+        for (const [key, entryValue] of Object.entries(value)) {
+            const jsonValue = toJsonValue(entryValue, seen)
+            if (jsonValue !== undefined) {
+                output[key] = jsonValue
+            }
+        }
+
+        return output
+    } finally {
+        seen.delete(value)
+    }
 }
 
 function errorToJsonValue(error: Error, seen: WeakSet<object>): FailedRerunJsonValue | undefined {

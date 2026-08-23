@@ -14,7 +14,7 @@ export async function appendFailedTest(manifestPath: string, record: FailedTestR
     await fs.appendFile(manifestPath, `${JSON.stringify(failedTestRecordSchema.parse(record))}\n`, 'utf8')
 }
 
-export async function readFailedTests(manifestPath: string): Promise<FailedTestRecord[]> {
+export async function readManifest(manifestPath: string): Promise<FailedTestRecord[]> {
     try {
         const content = await fs.readFile(manifestPath, 'utf8')
         return dedupeFailedTests(parseManifest(content))
@@ -26,14 +26,40 @@ export async function readFailedTests(manifestPath: string): Promise<FailedTestR
     }
 }
 
-function parseManifest(content: string) {
-    return content
-        .split('\n')
-        .filter(Boolean)
-        .map((line) => failedTestRecordSchema.parse(JSON.parse(line)))
+export async function readFailedTests(manifestPath: string): Promise<FailedTestRecord[]> {
+    return (await readManifest(manifestPath)).filter((record) => record.outcome !== 'passed')
 }
 
-function dedupeFailedTests(records: FailedTestRecord[]) {
+// A worker killed mid-write, a full disk, or an unrelated process appending to the
+// manifest would otherwise abort the whole rerun. A manifest is diagnostic data, so a
+// line we cannot read is skipped rather than allowed to destroy the run.
+function parseManifest(content: string) {
+    const records: FailedTestRecord[] = []
+
+    for (const line of content.split('\n')) {
+        if (!line) {
+            continue
+        }
+
+        const record = parseManifestLine(line)
+        if (record) {
+            records.push(record)
+        }
+    }
+
+    return records
+}
+
+function parseManifestLine(line: string) {
+    try {
+        const parsed = failedTestRecordSchema.safeParse(JSON.parse(line))
+        return parsed.success ? parsed.data : undefined
+    } catch {
+        return undefined
+    }
+}
+
+export function dedupeFailedTests(records: FailedTestRecord[]) {
     const seen = new Set<string>()
     const deduped: FailedTestRecord[] = []
 
@@ -49,6 +75,6 @@ function dedupeFailedTests(records: FailedTestRecord[]) {
     return deduped
 }
 
-function getFailureKey(record: FailedTestRecord) {
+export function getFailureKey(record: FailedTestRecord) {
     return `${record.framework}\0${record.spec}\0${record.fullTitle}`
 }

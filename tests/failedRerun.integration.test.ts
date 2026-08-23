@@ -53,6 +53,32 @@ async function recordFailedTest(args: FailedRerunRunArgs, specFile: string, full
     } as any)
 }
 
+async function recordPassedTest(args: FailedRerunRunArgs, specFile: string, fullTitle: string) {
+    const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
+    await service.afterTest({
+        title: fullTitle.split(' ').at(-1) || fullTitle,
+        fullTitle,
+        file: specFile
+    } as any, {}, {
+        passed: true,
+        duration: 1,
+        retries: { attempts: 0, limit: 0 }
+    } as any)
+}
+
+async function recordPassedScenario(args: FailedRerunRunArgs, featureFile: string, scenarioName: string) {
+    const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
+    await service.afterScenario({
+        pickle: {
+            name: scenarioName,
+            uri: featureFile
+        }
+    } as any, {
+        passed: true,
+        duration: 1
+    } as any, {})
+}
+
 async function recordFailedScenario(args: FailedRerunRunArgs, featureFile: string, scenarioName: string) {
     const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
     await service.afterScenario({
@@ -120,6 +146,12 @@ describe('failed test rerun integration', () => {
                     return 1
                 }
 
+                if (runs.length === 2) {
+                    await recordPassedTest(args, firstSpec, 'checkout rejects expired card')
+                    return 0
+                }
+
+                await recordPassedTest(args, secondSpec, 'account updates profile')
                 return 0
             }
         })
@@ -185,6 +217,7 @@ describe('failed test rerun integration', () => {
                         return 1
                     }
 
+                    await recordPassedTest(args, spec, 'flaky mobile action recovers')
                     return 0
                 }
             })
@@ -219,11 +252,17 @@ describe('failed test rerun integration', () => {
                     return 1
                 }
 
+                if (runs.length === 2) {
+                    await recordPassedTest(args, firstSpec, 'checkout rejects expired card')
+                    return 0
+                }
+
                 if (runs.length === 3) {
                     await recordFailedTest(args, secondSpec, 'account updates profile')
                     return 1
                 }
 
+                await recordPassedTest(args, secondSpec, 'account updates profile')
                 return 0
             }
         })
@@ -257,6 +296,12 @@ describe('failed test rerun integration', () => {
                     return 1
                 }
 
+                if (browserstackEnvPerRun.length === 2) {
+                    await recordPassedTest(args, firstSpec, 'checkout rejects expired card')
+                    return 0
+                }
+
+                await recordPassedTest(args, secondSpec, 'account updates profile')
                 return 0
             }
         })
@@ -302,6 +347,7 @@ describe('failed test rerun integration', () => {
                     return 1
                 }
 
+                await recordPassedTest(args, spec, 'checkout rejects expired card')
                 return 0
             }
         })
@@ -367,6 +413,7 @@ describe('failed test rerun integration', () => {
                     return 1
                 }
 
+                await recordPassedTest(args, spec, 'mobile checkout accepts wallet payment')
                 return 0
             }
         })
@@ -426,6 +473,7 @@ describe('failed test rerun integration', () => {
                     return 1
                 }
 
+                await recordPassedScenario(args, feature, 'mobile login accepts biometrics')
                 return 0
             }
         })
@@ -443,8 +491,8 @@ describe('failed test rerun integration', () => {
         })
         expect(runs[1].args.cucumberOpts?.timeout).toBe(90000)
         expect(runs[1].args.cucumberOpts?.tagExpression).toBe('@mobile')
-        expect(runs[1].args.cucumberOpts?.name?.map(String)).toEqual([
-            '/^mobile login accepts biometrics$/'
+        expect(runs[1].args.cucumberOpts?.name).toEqual([
+            '^mobile login accepts biometrics$'
         ])
     })
 
@@ -542,6 +590,7 @@ describe('failed test rerun integration', () => {
                     return 1
                 }
 
+                await recordPassedTest(args, spec, 'checkout rejects expired card')
                 return 0
             }
         })
@@ -566,6 +615,7 @@ describe('failed test rerun integration', () => {
                     return 1
                 }
 
+                await recordPassedScenario(args, feature, 'checkout rejects expired card')
                 return 0
             }
         })
@@ -573,8 +623,8 @@ describe('failed test rerun integration', () => {
         expect(result.exitCode).toBe(0)
         expect(runs).toHaveLength(2)
         expect(runs[1].args.spec).toEqual([feature])
-        expect(runs[1].args.cucumberOpts?.name?.map(String)).toEqual([
-            '/^checkout rejects expired card$/'
+        expect(runs[1].args.cucumberOpts?.name).toEqual([
+            '^checkout rejects expired card$'
         ])
     })
 })

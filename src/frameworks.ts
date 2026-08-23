@@ -4,12 +4,14 @@ import * as z from 'zod'
 import { serializeError } from '#src/errors'
 import type {
     FailedRerunAttemptType,
+    FailedRerunOutcome,
     FailedTestRecord
 } from '#src/types'
 
 interface RecordContext {
     attempt: FailedRerunAttemptType
     cid?: string
+    outcome?: FailedRerunOutcome
 }
 
 type FullTitle = string | (() => string)
@@ -41,10 +43,11 @@ const cucumberScenarioWorldSchema: z.ZodType<CucumberScenarioWorld> = z.object({
 export function createMochaFailedTestRecord(
     test: Frameworks.Test,
     result: Frameworks.TestResult,
-    context: RecordContext
+    context: RecordContext,
+    testContext?: unknown
 ): FailedTestRecord | undefined {
     const spec = getSpecFile(test)
-    const fullTitle = getMochaFullTitle(test)
+    const fullTitle = getMochaFullTitle(test, testContext)
 
     if (!spec || !fullTitle) {
         return undefined
@@ -57,6 +60,7 @@ export function createMochaFailedTestRecord(
         fullTitle,
         title: test.title,
         cid: context.cid,
+        ...passedOutcome(context),
         error: serializeError(result.error)
     }
 }
@@ -80,18 +84,46 @@ export function createCucumberFailedScenarioRecord(
         fullTitle: scenarioName,
         title: scenarioName,
         cid: context.cid,
+        ...passedOutcome(context),
         error: serializeError(result.error)
     }
+}
+
+// A failure record carries no `outcome`: that keeps the manifest format unchanged for the
+// only records the initial run ever writes. `passed` is written solely by focused reruns,
+// where it is the evidence that a targeted test actually executed.
+function passedOutcome(context: RecordContext) {
+    return context.outcome === 'passed' ? { outcome: 'passed' as const } : {}
 }
 
 function getSpecFile(test: Frameworks.Test) {
     return parseNonEmptyString(test.file)
 }
 
-function getMochaFullTitle(test: Frameworks.Test) {
-    const fullTitle = readProperty(test, 'fullTitle') as FullTitle | undefined
-    const stringTitle = parseNonEmptyString(fullTitle)
+function getMochaFullTitle(test: Frameworks.Test, testContext?: unknown) {
+    const fromTest = resolveFullTitle(readProperty(test, 'fullTitle') as FullTitle | undefined)
+    if (fromTest) {
+        return fromTest
+    }
 
+    // `@wdio/mocha-framework` builds the `afterTest` argument as
+    // `{ ...context.test, parent: context.test?.parent?.title }`. That spread copies
+    // only own enumerable properties, and Mocha's `fullTitle` is a prototype method,
+    // so it never survives; `parent` is reduced to the immediate parent's title.
+    // Rebuilding the title from `parent + title` therefore DROPS every outer
+    // `describe`, and the resulting `mochaOpts.grep` cannot match the title Mocha
+    // actually greps against. The live context still holds the real Runnable, whose
+    // `fullTitle()` is exactly what Mocha filters on.
+    const fromContext = resolveFullTitle(readContextFullTitle(testContext))
+    if (fromContext) {
+        return fromContext
+    }
+
+    return parseNonEmptyString([test.parent, test.title].filter(Boolean).join(' '))
+}
+
+function resolveFullTitle(fullTitle: FullTitle | undefined) {
+    const stringTitle = parseNonEmptyString(fullTitle)
     if (stringTitle) {
         return stringTitle
     }
@@ -101,7 +133,27 @@ function getMochaFullTitle(test: Frameworks.Test) {
         return parseNonEmptyString(callbackTitle.data())
     }
 
-    return parseNonEmptyString([test.parent, test.title].filter(Boolean).join(' '))
+    return undefined
+}
+
+// Mocha exposes the running test as `this.test`; `afterEach`-style contexts use
+// `this.currentTest` instead.
+function readContextFullTitle(testContext: unknown): FullTitle | undefined {
+    if (!testContext || typeof testContext !== 'object') {
+        return undefined
+    }
+
+    for (const key of ['test', 'currentTest'] as const) {
+        const runnable = readProperty(testContext, key)
+        if (runnable && typeof runnable === 'object') {
+            const fullTitle = readProperty(runnable, 'fullTitle') as FullTitle | undefined
+            if (fullTitle !== undefined) {
+                return fullTitle
+            }
+        }
+    }
+
+    return undefined
 }
 
 function getCucumberScenarioName(world: Frameworks.World) {
