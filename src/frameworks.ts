@@ -67,7 +67,8 @@ export function createMochaFailedTestRecord(
         framework,
         spec,
         fullTitle,
-        title: test.title || parseNonEmptyString(readProperty(test, 'description')),
+        title: parseNonEmptyString(readProperty(test, 'title'))
+            ?? parseNonEmptyString(readProperty(test, 'description')),
         cid: context.cid,
         ...passedOutcome(context),
         error: serializeError(readProperty(result, 'error'))

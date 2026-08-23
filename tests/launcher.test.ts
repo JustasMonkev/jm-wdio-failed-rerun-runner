@@ -330,6 +330,95 @@ describe('WDIO launcher adapter', () => {
         }
     })
 
+    // Like the cache test, these have to replay both attempts in ONE process: a fresh Node
+    // per attempt caches nothing, so the assertion would hold whether or not anything is
+    // purged.
+    async function captureWrappers(configPath: string, workspace: string) {
+        const wrappers: string[] = []
+
+        class CapturingLauncher {
+            constructor(public readonly configPath: string, public readonly args: unknown) {}
+
+            async run() {
+                const kept = path.join(workspace, `kept-${wrappers.length}${path.extname(this.configPath)}`)
+                await fs.copyFile(this.configPath, kept)
+                wrappers.push(kept)
+                return 0
+            }
+        }
+
+        const run = createWdioRun(async () => ({ Launcher: CapturingLauncher }))
+        const args = { services: [['@wdio/failed-rerun-runner', { attempt: 'initial' }]] }
+        await run(configPath, args as never)
+        await run(configPath, args as never)
+
+        const { stdout } = await promisify(execFile)(process.execPath, [
+            '--import', pathToFileURL(require.resolve('tsx')).href,
+            '--input-type=module',
+            '-e',
+            `const { pathToFileURL } = await import('node:url')
+             const seen = []
+             for (const [index, wrapper] of process.argv.slice(1).entries()) {
+                 process.env.WDIO_FAILED_RERUN_RETRY = String(index)
+                 const m = await import(pathToFileURL(wrapper).href)
+                 seen.push(m.config.retryAttempt ?? m.config.loadedAt ?? null)
+             }
+             process.stdout.write(JSON.stringify(seen))`,
+            ...wrappers
+        ])
+
+        return JSON.parse(stdout) as unknown[]
+    }
+
+    it.each([
+        ['a CommonJS helper', undefined, 'wdio.conf.js', 'helper.js', true],
+        ['a TypeScript helper compiled to CommonJS', undefined, 'wdio.conf.ts', 'helper.ts', false]
+    ])('re-evaluates %s the config imports', async (_label, type, configName, helperName, commonjs) => {
+        // Dropping the config's own cache entry is not enough - a helper it imports holds
+        // its own module-scope reading of the environment.
+        const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wdio-launcher-trans-'))
+        const configPath = path.join(workspace, configName)
+
+        await fs.writeFile(path.join(workspace, 'package.json'),
+            JSON.stringify({ name: 'p', private: true, ...(type ? { type } : {}) }))
+        await fs.writeFile(path.join(workspace, helperName), commonjs
+            ? 'exports.retryAttempt = process.env.WDIO_FAILED_RERUN_RETRY\n'
+            : 'export const retryAttempt = process.env.WDIO_FAILED_RERUN_RETRY\n')
+        await fs.writeFile(configPath, commonjs
+            ? `const h = require('./${helperName}')\nexports.config = { retryAttempt: h.retryAttempt }\n`
+            : `import { retryAttempt } from './helper'\nexport const config = { retryAttempt }\n`)
+
+        try {
+            expect(await captureWrappers(configPath, workspace)).toEqual(['0', '1'])
+        } finally {
+            await fs.rm(workspace, { recursive: true, force: true })
+        }
+    })
+
+    it('leaves third-party modules cached so their singletons survive', async () => {
+        // Re-evaluating node_modules would hand out fresh instances of modules WebdriverIO
+        // itself holds references to, and they do not read the rerun environment anyway.
+        const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wdio-launcher-nm-'))
+        const packageDirectory = path.join(workspace, 'node_modules', 'pkg')
+        await fs.mkdir(packageDirectory, { recursive: true })
+        await fs.writeFile(path.join(workspace, 'package.json'), JSON.stringify({ name: 'p', private: true }))
+        await fs.writeFile(path.join(packageDirectory, 'package.json'),
+            JSON.stringify({ name: 'pkg', version: '1.0.0', main: 'index.js' }))
+        await fs.writeFile(path.join(packageDirectory, 'index.js'),
+            'module.exports = { loadedAt: process.env.WDIO_FAILED_RERUN_RETRY }\n')
+
+        const configPath = path.join(workspace, 'wdio.conf.js')
+        await fs.writeFile(configPath,
+            "const pkg = require('pkg')\nexports.config = { loadedAt: pkg.loadedAt }\n")
+
+        try {
+            // The config reloaded on the second attempt, but the package it required did not.
+            expect(await captureWrappers(configPath, workspace)).toEqual(['0', '0'])
+        } finally {
+            await fs.rm(workspace, { recursive: true, force: true })
+        }
+    })
+
     it('hands WebdriverIO a wrapper it will register its TypeScript loader for', async () => {
         // WebdriverIO decides whether to load tsx by the config path's suffix
         // (`TS_FILE_EXTENSIONS.some((ext) => this._configFilePath.endsWith(ext))`), so a

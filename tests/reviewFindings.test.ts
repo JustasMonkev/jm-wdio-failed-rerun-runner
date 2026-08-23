@@ -1367,3 +1367,108 @@ describe('a throwing result property cannot cost the failure record', () => {
             .toEqual(['signs in'])
     })
 })
+
+describe('a superseded record is not execution evidence', () => {
+    it('reports a rerun whose target was skipped as never run, not as a recovery', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'a.e2e.ts')
+        const failure: FailedTestRecord = {
+            attempt: 'initial',
+            framework: 'mocha',
+            spec,
+            fullTitle: 'suite t',
+            cid: '0-0'
+        }
+        // `readAll` is documented as every record a rerun wrote, so an adapter honouring
+        // that returns superseded records too: here the focused rerun failed the test and
+        // then a spec-file retry skipped it. The skip retires the failure, so nothing in
+        // this sequence is evidence the test actually ran.
+        const raw: FailedTestRecord[] = [
+            { ...failure, attempt: 'rerun' },
+            { ...failure, attempt: 'rerun', cid: '0-1', outcome: 'skipped' }
+        ]
+        let runs = 0
+
+        const result = await createFailedTestsRerunner({
+            manifests: {
+                async reset() {},
+                async read() {
+                    return runs <= 1 ? [failure] : []
+                },
+                async readAll() {
+                    return raw
+                }
+            },
+            run: async () => {
+                runs++
+                return runs === 1 ? 1 : 0
+            }
+        }).run(path.join(workspace, 'wdio.conf.ts'), { cwd: workspace, quiet: true })
+
+        expect(result.exitCode).toBe(1)
+        expect(result.summary.flaky).toEqual([])
+        expect(result.summary.notExecuted.map((test) => test.fullTitle)).toEqual(['suite t'])
+    })
+
+    it('still counts a genuine pass that supersedes an earlier failure as a recovery', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'a.e2e.ts')
+        const failure: FailedTestRecord = {
+            attempt: 'initial',
+            framework: 'mocha',
+            spec,
+            fullTitle: 'suite t',
+            cid: '0-0'
+        }
+        // The other direction: the same shape, but the retry passed. Deduplicating must not
+        // make a recovered test look unexecuted.
+        const raw: FailedTestRecord[] = [
+            { ...failure, attempt: 'rerun' },
+            { ...failure, attempt: 'rerun', cid: '0-1', outcome: 'passed' }
+        ]
+        let runs = 0
+
+        const result = await createFailedTestsRerunner({
+            manifests: {
+                async reset() {},
+                async read() {
+                    return runs <= 1 ? [failure] : []
+                },
+                async readAll() {
+                    return raw
+                }
+            },
+            run: async () => {
+                runs++
+                return runs === 1 ? 1 : 0
+            }
+        }).run(path.join(workspace, 'wdio.conf.ts'), { cwd: workspace, quiet: true })
+
+        expect(result.exitCode).toBe(0)
+        expect(result.summary.flaky.map((test) => test.fullTitle)).toEqual(['suite t'])
+        expect(result.summary.notExecuted).toEqual([])
+    })
+
+    it('keeps the failure record when the test title throws on read', async () => {
+        const manifestPath = path.join(await makeTempDir(), 'manifest.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+        const test = { fullTitle: 'login signs in', file: 'specs/login.e2e.ts' }
+        Object.defineProperty(test, 'title', {
+            configurable: true,
+            get() {
+                throw new Error('cannot read title')
+            }
+        })
+
+        await service.afterTest(test as never, {}, {
+            passed: false,
+            duration: 1,
+            retries: { attempts: 0, limit: 0 }
+        } as never)
+
+        // `fullTitle` is what drives the rerun filter, so the record is still worth keeping
+        // even with no short title to show.
+        expect((await readManifest(manifestPath)).map((record) => record.fullTitle))
+            .toEqual(['login signs in'])
+    })
+})

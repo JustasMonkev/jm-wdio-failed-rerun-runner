@@ -84,6 +84,18 @@ const result = await runFailedTestsRerun('./wdio.conf.ts', {
 process.exit(result.exitCode)
 ```
 
+### Configs that read the rerun environment
+
+Every attempt runs in one process, so a config is re-evaluated for each one rather than
+reused from Node's module cache. That covers the config itself in all forms, and helpers it
+`require`s in a CommonJS project.
+
+One case is not covered: a helper reached through a static `import` in an ES module project
+keeps whatever it read the first time, because Node offers no way to invalidate the ES
+module registry. If a helper of yours branches on `WDIO_FAILED_RERUN_RETRY` or
+`BROWSERSTACK_RERUN`, read the variable inside a function rather than at module scope -
+hooks run per attempt, so they always see the current value.
+
 ### Registering your own services
 
 Services declared in your config's `services` array are passed through untouched, including

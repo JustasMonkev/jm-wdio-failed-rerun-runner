@@ -316,12 +316,15 @@ async function runRerunPlan(
     )
     await countUnreadable(settings, manifestPath)
     const { records, canVerifyExecution } = await readRerunRecords(settings, manifestPath)
-    const notExecuted = canVerifyExecution ? findTestsThatDidNotRun(plan, records) : []
-    // Deduplicate first: filtering passes out beforehand would discard the very record
-    // that supersedes an earlier failure. The built-in store already returns deduplicated
-    // records, but `readAll` is documented as every record a rerun wrote, and a custom
-    // adapter honouring that literally would otherwise keep a recovered test failing.
-    const failures = dedupeFailedTests(records).filter(isUnresolvedFailure)
+    // Deduplicate once, and answer both questions from the result. `readAll` is documented
+    // as every record a rerun wrote, so a custom adapter honouring that literally returns
+    // superseded records too - and a superseded record is not the test's outcome. Reading
+    // execution evidence from the raw sequence while selecting failures from the
+    // deduplicated one lets a failure that a later skip retired still vouch for the test
+    // having run, which reports a recovery for a test that never executed.
+    const finalOutcomes = dedupeFailedTests(records)
+    const notExecuted = canVerifyExecution ? findTestsThatDidNotRun(plan, finalOutcomes) : []
+    const failures = finalOutcomes.filter(isUnresolvedFailure)
 
     const rerunAttempt = {
         exitCode,

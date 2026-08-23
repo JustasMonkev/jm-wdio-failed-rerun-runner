@@ -6,6 +6,7 @@ import fs from 'node:fs/promises'
 
 import * as z from 'zod'
 
+import { CONFIG_CACHE_PATH } from '#src/configCache'
 import { FailedRerunUsageError } from '#src/errors'
 import { jsonSerializableValueSchema } from '#src/schemas'
 import type {
@@ -112,14 +113,9 @@ async function createConfigWithExtraServices(configPath: string, services: NonNu
     // distinct module, while a CommonJS config is keyed by filename and ignores the query
     // entirely - which covers `.cjs`, `.js` outside an ES module package, and TypeScript
     // compiled to CommonJS. Dropping its cache entry first is what makes those reload.
-    return writeWrapper(wrapperPath, `import { createRequire } from 'node:module'
+    return writeWrapper(wrapperPath, `import { purgeCommonJsCache } from ${JSON.stringify(CONFIG_CACHE_PATH)}
 
-const require = createRequire(import.meta.url)
-try {
-    delete require.cache[require.resolve(${JSON.stringify(configPath)})]
-} catch {
-    // An ES-module config has no CommonJS cache entry to drop; the query handles it.
-}
+purgeCommonJsCache(${JSON.stringify(configPath)})
 
 const baseModule = await import(${JSON.stringify(`${pathToFileURL(configPath).href}?wdio-failed-rerun=${wrapperId}`)})
 const baseConfig = baseModule.config || baseModule.default?.config || baseModule.default || {}
