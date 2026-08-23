@@ -434,7 +434,10 @@ describe('failed test rerun integration', () => {
         expect(runs[1].args.mochaOpts).toEqual({
             ui: 'bdd',
             timeout: 120000,
-            grep: '^(?:mobile checkout accepts wallet payment)$'
+            grep: '^(?:mobile checkout accepts wallet payment)$',
+            // A project that inverts its own grep must not have this filter exclude the
+            // very test being retried.
+            invert: false
         })
     })
 

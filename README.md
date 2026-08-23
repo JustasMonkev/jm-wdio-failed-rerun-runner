@@ -210,6 +210,14 @@ worker as `{}` and match nothing. If a feature file contains duplicate scenario 
 WebdriverIO's name filter can still match more than one scenario; use unique scenario names
 for precise focused reruns.
 
+Focused reruns disable `mochaOpts.invert` and `jasmineOpts.invertGrep`, because the
+focused filter names exactly the tests that must run; keeping a project's own inversion
+would exclude the failed test and run everything else.
+
+Tests that share a full title within one spec cannot be targeted individually — the
+filter selects all of them, and their manifest records cannot be told apart. Give tests
+unique titles where focused reruns matter.
+
 Mocha full titles are read from the live test context. WebdriverIO hands `afterTest` a
 spread of the Mocha test object, which drops `fullTitle` (a prototype method) and reduces
 `parent` to the immediate suite title, so rebuilding the title from `parent + title` would

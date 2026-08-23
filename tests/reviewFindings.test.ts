@@ -264,3 +264,100 @@ describe('substituted manifest storage is respected', () => {
         expect(await fs.readdir(workspace)).toEqual([])
     })
 })
+
+describe('a focused rerun cannot be inverted away', () => {
+    it.each([
+        ['mocha', { mochaOpts: { invert: true } }, 'mochaOpts'],
+        ['jasmine', { jasmineOpts: { invertGrep: true } }, 'jasmineOpts']
+    ])('overrides %s grep inversion so the filter selects the target', async (framework, args, key) => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'a.e2e.ts')
+        let rerunOptions: Record<string, unknown> | undefined
+
+        await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace,
+            quiet: true,
+            args,
+            run: async (_configPath, runArgs) => {
+                const options = (runArgs as Record<string, Record<string, unknown> | undefined>)[key]
+                if (options?.grep) {
+                    rerunOptions = options
+                    return 0
+                }
+
+                const config = framework === 'jasmine' ? { framework: 'jasmine' } : {}
+                const service = new FailedTestRerunService(
+                    getServiceOptions(runArgs),
+                    {},
+                    config as WebdriverIO.Config
+                )
+                await service.afterTest({
+                    title: 't',
+                    fullTitle: 'suite t',
+                    fullName: 'suite t',
+                    description: 't',
+                    file: spec
+                } as never, {}, {
+                    passed: false,
+                    duration: 1,
+                    retries: { attempts: 0, limit: 0 }
+                } as never)
+                return 1
+            }
+        })
+
+        // Keeping the project's inversion would make this filter EXCLUDE the failed test
+        // and run everything else, so the target could never recover.
+        expect(rerunOptions?.grep).toBe('^(?:suite t)$')
+        expect(rerunOptions?.[framework === 'jasmine' ? 'invertGrep' : 'invert']).toBe(false)
+    })
+})
+
+describe('a rerun that recorded nothing is never read as a recovery', () => {
+    it('does not call a test flaky when the rerun failed without recording it', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'a.e2e.ts')
+        let runs = 0
+
+        const result = await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace,
+            quiet: true,
+            run: async (_configPath, args) => {
+                runs++
+
+                if (runs === 1) {
+                    const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
+                    await service.afterTest({
+                        title: 't',
+                        fullTitle: 'suite t',
+                        file: spec
+                    } as never, {}, {
+                        passed: false,
+                        duration: 1,
+                        retries: { attempts: 0, limit: 0 }
+                    } as never)
+                    return 1
+                }
+
+                // The rerun executed the test but reported failure without recording which
+                // one - a crash, or two tests sharing a full title colliding in the
+                // manifest. It proves nothing about whether the target recovered.
+                const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
+                await service.afterTest({
+                    title: 't',
+                    fullTitle: 'suite t',
+                    file: spec
+                } as never, {}, {
+                    passed: true,
+                    duration: 1,
+                    retries: { attempts: 0, limit: 0 }
+                } as never)
+                return 1
+            }
+        })
+
+        expect(result.exitCode).toBe(1)
+        expect(result.summary.flaky).toEqual([])
+        expect(result.summary.notExecuted.map((test) => test.fullTitle)).toEqual(['suite t'])
+    })
+})

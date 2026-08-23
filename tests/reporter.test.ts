@@ -117,7 +117,7 @@ describe('rerun reporting', () => {
         expect(result.summary.flaky).toEqual([])
         expect(result.summary.notExecuted.map((test) => test.fullTitle)).toEqual(['login flow signs in'])
         expect(lines).toContain(
-            '[wdio-failed-rerun]   not run: login flow signs in (rerun filter matched no test)'
+            '[wdio-failed-rerun]   no result: login flow signs in (the rerun recorded no outcome for it)'
         )
     })
 

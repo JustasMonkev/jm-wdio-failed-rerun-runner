@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     indistinguishable from "everything passed", so a filter matching zero tests
     produced exit code `0`. Reruns now record executed tests, and a targeted test
     that never ran is a hard failure reported in `notExecuted`.
+- **A project's own grep inversion broke every focused rerun.** With
+  `mochaOpts.invert` or `jasmineOpts.invertGrep` set, the focused filter kept the
+  inversion and therefore EXCLUDED the failed test while running everything else, so
+  the target could never recover no matter how many rounds were configured. Inversion
+  is now explicitly disabled when the focused filter is installed.
+- **A rerun that failed without recording anything was read as a recovery.** Whether it
+  crashed or two tests sharing a full title collided in the manifest, such a rerun says
+  nothing about whether the targeted test passed; it is now reported as having produced
+  no result rather than as flaky.
 - **A title accessor that threw on read still killed the hook.** Guarding only the
   invocation left the property read itself unprotected, so a partially initialised
   runnable exposing `fullTitle` as a throwing getter lost the failure record.

@@ -29,8 +29,8 @@ export function summarize(
     // Rounds run in order, so the last attempt that targeted a test is the one that says
     // how it ended. Accumulating instead would keep an early round's failure forever and
     // report a test that later recovered as broken while the run exits 0.
-    const latest = new Map<string, 'failed' | 'passed' | 'notExecuted'>()
-    const notExecutedRecords = new Map<string, FailedTestRecord>()
+    const latest = new Map<string, 'failed' | 'passed' | 'noResult'>()
+    const noResultRecords = new Map<string, FailedTestRecord>()
 
     for (const attempt of attempts) {
         if (attempt.type !== 'rerun') {
@@ -39,17 +39,21 @@ export function summarize(
 
         const failed = new Set(attempt.failures.map(getFailureKeyForSummary))
         const missing = new Set(attempt.notExecuted.map(getFailureKeyForSummary))
+        // The run reported failure yet recorded nothing: it crashed, or records collided
+        // because two tests share a full title. Either way it says nothing about whether
+        // the targeted tests recovered, so it must not be read as a pass.
+        const inconclusive = attempt.exitCode !== 0 && attempt.failures.length === 0
 
         for (const record of attempt.targeted) {
             const key = getFailureKeyForSummary(record)
 
-            if (missing.has(key)) {
-                latest.set(key, 'notExecuted')
-                notExecutedRecords.set(key, record)
+            if (missing.has(key) || (inconclusive && !failed.has(key))) {
+                latest.set(key, 'noResult')
+                noResultRecords.set(key, record)
                 continue
             }
 
-            notExecutedRecords.delete(key)
+            noResultRecords.delete(key)
             latest.set(key, failed.has(key) ? 'failed' : 'passed')
         }
     }
@@ -75,7 +79,7 @@ export function summarize(
     return {
         flaky,
         broken,
-        notExecuted: Array.from(notExecutedRecords.values())
+        notExecuted: Array.from(noResultRecords.values())
     }
 }
 
@@ -114,10 +118,11 @@ export function reportSummary(result: FailedRerunResult, logger: FailedRerunLogg
         logger.log(`${PREFIX}   broken: ${record.fullTitle}`)
     }
 
-    // A targeted test that never ran means the rerun filter did not match it, so the
-    // run proves nothing about that test. Say so rather than implying it passed.
+    // The rerun recorded no outcome for these - its filter matched nothing, or it failed
+    // without reporting which test. Either way it proves nothing about them, so say that
+    // rather than implying they passed.
     for (const record of notExecuted) {
-        logger.log(`${PREFIX}   not run: ${record.fullTitle} (rerun filter matched no test)`)
+        logger.log(`${PREFIX}   no result: ${record.fullTitle} (the rerun recorded no outcome for it)`)
     }
 }
 

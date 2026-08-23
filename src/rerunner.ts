@@ -324,7 +324,11 @@ function createTitleGrepRerunArgs(
             spec: plan.specs,
             jasmineOpts: {
                 ...(baseArgs.jasmineOpts || {}),
-                grep: plan.grep
+                grep: plan.grep,
+                // A project that inverts its own grep would otherwise keep the inversion
+                // and have this filter EXCLUDE the very test being retried, running
+                // everything else instead. The focused filter names exactly what must run.
+                invertGrep: false
             }
         }
     }
@@ -334,7 +338,8 @@ function createTitleGrepRerunArgs(
         spec: plan.specs,
         mochaOpts: {
             ...(baseArgs.mochaOpts || {}),
-            grep: plan.grep
+            grep: plan.grep,
+            invert: false
         }
     }
 }
