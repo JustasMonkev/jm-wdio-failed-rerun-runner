@@ -147,6 +147,18 @@ execution cannot be verified for them and this protection is skipped.
 
 Recorded errors preserve standard `Error` fields plus serializable `cause` and custom enumerable properties. This keeps the manifest useful for diagnostics without allowing non-JSON values to break writes.
 
+## Known Limitations
+
+Reporter output is not namespaced per attempt. Every attempt launches the same WebdriverIO
+config, so reporters that write to a fixed `outputDir` (JUnit, Allure) name their files by
+worker id, and a rerun's files can overwrite the initial run's. If you archive reporter
+output in CI, copy it out of `outputDir` between the initial run and the reruns, or give the
+rerun step its own `outputDir`.
+
+Reruns are sequential: each spec group is a separate WebdriverIO launcher run, so a round
+with many failed specs starts the launcher once per spec rather than using the config's
+`maxInstances` to run them in parallel.
+
 ## BrowserStack Support
 
 When the suite runs through `@wdio/browserstack-service`, focused reruns follow the same
