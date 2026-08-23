@@ -84,6 +84,16 @@ const result = await runFailedTestsRerun('./wdio.conf.ts', {
 process.exit(result.exitCode)
 ```
 
+### Registering your own services
+
+Services declared in your config's `services` array are passed through untouched, including
+service classes, instances, and options containing functions.
+
+Services passed to the runner programmatically are a narrower case: they are written into a
+generated config that each WebdriverIO worker loads by path, so they have to be
+JSON-serializable. A class, an instance, or an option that is a function is rejected with a
+message naming the entry. Declare those in your config instead.
+
 ## How It Works
 
 Supported frameworks: Mocha, Jasmine and Cucumber.

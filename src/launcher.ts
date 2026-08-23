@@ -166,11 +166,37 @@ function withoutServices(args: FailedRerunRunArgs): FailedRerunRunArgs {
     return launcherArgs
 }
 
-function assertJsonSerializable<T>(value: T): T {
-    const result = jsonSerializableValueSchema.safeParse(value)
-    if (!result.success) {
-        throw new Error('WDIO service injection only supports JSON-serializable service entries')
+// Services passed as launcher arguments are written into the wrapper's source, and
+// WebdriverIO hands every worker the wrapper's *path* rather than the loaded object - so a
+// service class, an instance, or an option that is a function cannot survive the trip.
+// Services declared in the config's own `services` array are a different matter: the
+// wrapper spreads them at runtime, so those keep working and are the way to register one.
+function assertJsonSerializable(services: NonNullable<FailedRerunRunArgs['services']>) {
+    const offending = services.findIndex((service) => !jsonSerializableValueSchema.safeParse(service).success)
+    if (offending === -1) {
+        return services
     }
 
-    return value
+    throw new FailedRerunUsageError([
+        `Service entry ${offending} passed to the runner cannot be injected: ${describeServiceEntry(services[offending])}.`,
+        'Injected services are written into a generated config that each WebdriverIO worker loads by path,',
+        'so they have to be JSON-serializable.',
+        "Declare it in your config's own `services` array instead - those are passed through untouched."
+    ].join(' '))
+}
+
+function describeServiceEntry(service: unknown) {
+    if (typeof service === 'function') {
+        return `it is a service class${service.name ? ` (${service.name})` : ''}`
+    }
+
+    if (Array.isArray(service)) {
+        return `the options for '${String(service[0])}' are not JSON-serializable`
+    }
+
+    if (service && typeof service === 'object') {
+        return 'it is a service instance'
+    }
+
+    return `it is ${typeof service}`
 }

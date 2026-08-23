@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 
 import { ConfigParser } from '@wdio/config/node'
 
+import { FailedRerunUsageError } from '#src/errors'
 import { createWdioRun, loadWdioLauncher } from '#src/launcher'
 
 const require = createRequire(import.meta.url)
@@ -560,6 +561,106 @@ describe('WDIO launcher adapter', () => {
         } finally {
             await fs.rm(workspace, { recursive: true, force: true })
         }
+    })
+
+    describe('services that cannot be injected', () => {
+        class CustomService {
+            onPrepare() {}
+        }
+
+        async function inject(services: unknown[]) {
+            const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wdio-launcher-svc-'))
+            const configPath = path.join(workspace, 'wdio.conf.mjs')
+            await fs.writeFile(configPath, 'export const config = {}\n')
+
+            class FakeLauncher {
+                constructor(public readonly configPath: string, public readonly args: unknown) {}
+
+                async run() {
+                    return 0
+                }
+            }
+
+            try {
+                return await createWdioRun(async () => ({ Launcher: FakeLauncher }))(
+                    configPath,
+                    { services } as never
+                )
+            } finally {
+                await fs.rm(workspace, { recursive: true, force: true })
+            }
+        }
+
+        // WebdriverIO hands every worker the generated config's path, not the loaded
+        // object, so an injected service has to survive being written to a file. Saying so
+        // - and naming the entry - beats a bare "not serializable".
+        it.each([
+            ['a service class', [CustomService], 'it is a service class (CustomService)'],
+            ['a service instance', [new CustomService()], 'it is a service instance'],
+            ['a tuple with a function option', [['custom', { onReady: () => {} }]], "the options for 'custom' are not JSON-serializable"]
+        ])('explains what to do instead when given %s', async (_label, services, reason) => {
+            const failure = inject(services)
+
+            await expect(failure).rejects.toThrow(reason)
+            await expect(failure).rejects.toThrow("config's own `services` array")
+            await expect(failure).rejects.toBeInstanceOf(FailedRerunUsageError)
+        })
+
+        it('names the offending entry rather than the first one', async () => {
+            await expect(inject([['fine', { key: 'value' }], CustomService]))
+                .rejects.toThrow('Service entry 1')
+        })
+
+        it('injects service entries that are JSON-serializable', async () => {
+            await expect(inject([['custom', { key: 'value' }]])).resolves.toBe(0)
+        })
+
+        it('leaves a class declared in the config alone, which is the supported route', async () => {
+            const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wdio-launcher-svc2-'))
+            const configPath = path.join(workspace, 'wdio.conf.mjs')
+            await fs.writeFile(path.join(workspace, 'package.json'),
+                JSON.stringify({ name: 'p', private: true, type: 'module' }))
+            await fs.writeFile(configPath, `export class Declared { onPrepare() {} }
+export const config = { services: [Declared, ['custom', { onReady: () => 'live' }]] }
+`)
+
+            let kinds: string[] | undefined
+
+            class LoadingLauncher {
+                constructor(public readonly configPath: string, public readonly args: unknown) {}
+
+                async run() {
+                    // Load it by path, the way a worker process does.
+                    const { stdout } = await promisify(execFile)(process.execPath, [
+                        '--input-type=module',
+                        '-e',
+                        `const { pathToFileURL } = await import('node:url')
+                         const m = await import(pathToFileURL(process.argv[1]).href)
+                         process.stdout.write(JSON.stringify(m.config.services.map((s) =>
+                             typeof s === 'function' ? 'class ' + s.name
+                                 : Array.isArray(s) ? 'tuple ' + s[0] + ':' + typeof s[1].onReady
+                                 : typeof s)))`,
+                        this.configPath
+                    ])
+                    kinds = JSON.parse(stdout) as string[]
+                    return 0
+                }
+            }
+
+            try {
+                await expect(createWdioRun(async () => ({ Launcher: LoadingLauncher }))(configPath, {
+                    services: [['@wdio/failed-rerun-runner', { attempt: 'initial' }]]
+                })).resolves.toBe(0)
+
+                expect(kinds).toEqual([
+                    'class Declared',
+                    'tuple custom:function',
+                    'tuple @wdio/failed-rerun-runner:undefined'
+                ])
+            } finally {
+                await fs.rm(workspace, { recursive: true, force: true })
+            }
+        })
     })
 
     it('reports a missing config as a usage error, not a wrapper-file stack trace', async () => {
