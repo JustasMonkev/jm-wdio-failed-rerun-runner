@@ -94,6 +94,9 @@ describe('hostile error objects', () => {
             bare.a = 1
             return Object.assign(new Error('boom'), { bare })
         }],
+        ['a sparse array', () => Object.assign(new Error('boom'), {
+            sparse: new Array(1)
+        })],
         ['a plain string', () => 'plain string failure'],
         ['null', () => null]
     ]

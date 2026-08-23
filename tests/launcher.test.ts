@@ -542,6 +542,8 @@ describe('WDIO launcher adapter', () => {
         const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wdio-launcher-ro-'))
         const project = path.join(workspace, 'project')
         await fs.mkdir(project)
+        const configPath = path.join(project, 'wdio.conf.mjs')
+        await fs.writeFile(configPath, 'export const config = {}\n')
 
         const restore = await makeUnwritable(project)
         if (!restore) {
@@ -562,20 +564,18 @@ describe('WDIO launcher adapter', () => {
         }
 
         try {
-            // A tmpfs mount hides whatever was there, so the config is written through the
-            // same mechanism that made the directory unwritable, then sealed.
-            if (!await canWrite(project)) {
-                await fs.writeFile(path.join(project, 'wdio.conf.mjs'), 'export const config = {}\n')
-            } else {
+            // A tmpfs mount hides the config written above, so recreate it before sealing
+            // the mount. When chmod was sufficient, the original file remains visible.
+            if (await canWrite(project)) {
                 await promisify(execFile)('mount', ['-o', 'remount,rw', project])
-                await fs.writeFile(path.join(project, 'wdio.conf.mjs'), 'export const config = {}\n')
+                await fs.writeFile(configPath, 'export const config = {}\n')
                 await promisify(execFile)('mount', ['-o', 'remount,ro', project])
             }
 
             expect(await canWrite(project)).toBe(false)
 
             await expect(createWdioRun(async () => ({ Launcher: RecordingLauncher }))(
-                path.join(project, 'wdio.conf.mjs'),
+                configPath,
                 { services: [['@wdio/failed-rerun-runner', { attempt: 'initial' }]] }
             )).resolves.toBe(0)
 

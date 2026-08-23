@@ -154,7 +154,7 @@ function toJsonValue(value: unknown, seen: WeakSet<object>, depth = 0): FailedRe
         // hostile object's traversal can throw too. The catch below covers both: nothing
         // about an error's payload may cost us the failure record.
         if (Array.isArray(value)) {
-            return value.map((item) => toJsonValue(item, seen, depth + 1) ?? null)
+            return Array.from(value, (item) => toJsonValue(item, seen, depth + 1) ?? null)
         }
 
         const output: Record<string, FailedRerunJsonValue> = {}
