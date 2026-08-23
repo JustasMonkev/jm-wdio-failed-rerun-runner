@@ -71,6 +71,19 @@ describe('records from different workers are distinct executions', () => {
         expect(failures[0].cid).toBe('0-0')
     })
 
+    it('lets a WebdriverIO spec-file retry supersede the attempt it replaced', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'failures.ndjson')
+
+        // specFileRetries reruns the failed spec in a NEW worker, so the retry carries the
+        // same capability index with a higher run counter. Keying on the whole cid would
+        // keep the stale failure alive after WebdriverIO's own retry had already passed.
+        await recordAs(manifestPath, '0-0', false)
+        await recordAs(manifestPath, '0-1', true)
+
+        expect(await readFailedTests(manifestPath)).toEqual([])
+    })
+
     it('still lets a retry within one worker supersede its own earlier failure', async () => {
         const workspace = await makeTempDir()
         const manifestPath = path.join(workspace, 'failures.ndjson')

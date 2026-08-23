@@ -79,33 +79,31 @@ function parseManifestLine(line: string) {
     }
 }
 
-// Last record wins WITHIN one execution: a test retried in-run is written more than once
-// and the final entry reflects how it actually ended. Executions are keyed by worker as
-// well as by title, because the same test runs once per capability in separate workers -
-// collapsing those together would let one browser's pass erase another browser's failure.
-// Insertion order is preserved so the manifest still reads chronologically.
+// Last record wins within one capability: a test can be written more than once - an in-run
+// retry, or a spec-file retry that WebdriverIO runs in a fresh worker - and the final entry
+// reflects how it actually ended. Keying by capability rather than by worker is what makes
+// both collapse correctly, while still keeping separate capabilities apart so one browser's
+// pass cannot erase another browser's failure. Insertion order is preserved so the manifest
+// still reads chronologically.
 export function dedupeFailedTests(records: FailedTestRecord[]) {
     const byIdentity = new Map<string, FailedTestRecord>()
 
     for (const record of records) {
-        byIdentity.set(getRecordIdentity(record), record)
+        byIdentity.set(getExecutionKey(record), record)
     }
 
     return Array.from(byIdentity.values())
 }
 
-// Identifies one execution of a test. Used for deduplication only.
-export function getRecordIdentity(record: FailedTestRecord) {
-    return `${getFailureKey(record)}\0${record.cid ?? ''}`
-}
-
-// Identifies one test's execution under one capability, for matching a rerun's records
-// against the failures it targeted.
+// Identifies one test under one capability. Used both to deduplicate records and to match
+// a rerun's records against the failures it targeted.
 //
-// WebdriverIO's cid is `<capabilityIndex>-<runCounter>`, and only the capability index is
-// stable across attempts - a rerun launches fresh workers, so the counter differs. Keying
-// on the whole cid would make every rerun look like it ran nothing; ignoring the cid
-// entirely would let one capability's pass vouch for another capability that never ran.
+// WebdriverIO's cid is `<capabilityIndex>-<runCounter>`, and only the capability index
+// carries meaning here. The counter changes whenever a new worker starts - a focused
+// rerun, or a `specFileRetries` attempt - so keying on the whole cid would both make every
+// rerun look like it ran nothing and keep a stale failure alive after WebdriverIO's own
+// retry passed. Ignoring the cid entirely would instead let one capability's pass vouch
+// for another capability that never ran.
 export function getExecutionKey(record: FailedTestRecord) {
     return `${getFailureKey(record)}\0${getCapabilityId(record.cid)}`
 }

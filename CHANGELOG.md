@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     indistinguishable from "everything passed", so a filter matching zero tests
     produced exit code `0`. Reruns now record executed tests, and a targeted test
     that never ran is a hard failure reported in `notExecuted`.
+- **A WebdriverIO spec-file retry left a stale failure behind.** `specFileRetries` reruns
+  a failed spec in a fresh worker, which carries the same capability index with a higher
+  run counter, so deduplicating by the whole worker id kept the failed attempt alongside
+  the passing retry and reported a test as broken that WebdriverIO had already recovered.
+  Deduplication is now keyed by capability, the same identity used to match reruns.
 - **A lost manifest line could turn a failing run green.** Skipping an unreadable line
   keeps one bad write from destroying the whole run, but the failure it described then
   became invisible: the surviving failures were rerun, passed, and the run exited `0`
