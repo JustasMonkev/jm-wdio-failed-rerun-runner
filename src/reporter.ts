@@ -1,3 +1,4 @@
+import { getExecutionKey } from '#src/manifest'
 import type {
     FailedRerunAttemptResult,
     FailedRerunResult,
@@ -15,8 +16,10 @@ export const consoleLogger: FailedRerunLogger = {
     log: (message) => console.log(message)
 }
 
+// Scoped to the capability for the same reason the execution check is: a test that
+// recovered under one capability says nothing about another that never ran.
 export function getFailureKeyForSummary(record: FailedTestRecord) {
-    return `${record.framework}\0${record.spec}\0${record.fullTitle}`
+    return getExecutionKey(record)
 }
 
 // A test that failed the initial run and passed a rerun is flaky; one that failed

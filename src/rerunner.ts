@@ -8,7 +8,7 @@ import { runWdio } from '#src/launcher'
 import {
     appendFailedTest,
     dedupeFailedTests,
-    getFailureKey,
+    getExecutionKey,
     readFailedTests,
     readManifest,
     resetManifest
@@ -472,8 +472,8 @@ async function readRerunRecords(settings: RerunSettings, manifestPath: string) {
 // from "everything passed". Treating that as success turns a red build green, so a test
 // the rerun never executed stays a failure.
 function findTestsThatDidNotRun(plan: RerunPlan, records: FailedTestRecord[]) {
-    const executed = new Set(records.map(getFailureKey))
-    return plan.tests.filter((test) => !executed.has(getFailureKey(test)))
+    const executed = new Set(records.map(getExecutionKey))
+    return plan.tests.filter((test) => !executed.has(getExecutionKey(test)))
 }
 
 async function normalizeExitCode(exitCode: ReturnType<FailedRerunRun>) {

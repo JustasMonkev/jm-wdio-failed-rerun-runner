@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     indistinguishable from "everything passed", so a filter matching zero tests
     produced exit code `0`. Reruns now record executed tests, and a targeted test
     that never ran is a hard failure reported in `notExecuted`.
+- **One capability's pass vouched for another that never ran.** Execution evidence was
+  matched on framework, spec and title alone, so when the same test failed under two
+  capabilities and only one reran and passed, both were treated as recovered and the run
+  exited `0`. Matching is now scoped to the capability: WebdriverIO's cid is
+  `<capabilityIndex>-<runCounter>`, and only the capability index is stable between
+  attempts — using the whole cid would make every rerun look like it ran nothing.
+- **A Proxy could still escape error serialization.** `instanceof Error` walks the
+  prototype chain, so a Proxy that throws from `getPrototypeOf` failed before the guarded
+  traversal began and took the failure record with it.
 - **A project's own grep inversion broke every focused rerun.** With
   `mochaOpts.invert` or `jasmineOpts.invertGrep` set, the focused filter kept the
   inversion and therefore EXCLUDED the failed test while running everything else, so

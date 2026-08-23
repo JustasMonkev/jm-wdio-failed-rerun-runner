@@ -68,6 +68,16 @@ export function serializeError(error: unknown, seen = new WeakSet<object>(), dep
     }
 }
 
+// `instanceof` walks the prototype chain, and a Proxy can throw from its getPrototypeOf
+// trap. That would escape serializeError and cost us the failure record.
+function isError(value: object) {
+    try {
+        return value instanceof Error
+    } catch {
+        return false
+    }
+}
+
 function readStringProperty(value: object, key: string) {
     const read = readProperty(value, key)
     return typeof read === 'string' ? read : undefined
@@ -133,8 +143,8 @@ function toJsonValue(value: unknown, seen: WeakSet<object>, depth = 0): FailedRe
         return '[Max depth exceeded]'
     }
 
-    if (value instanceof Error) {
-        return errorToJsonValue(value, seen, depth)
+    if (isError(value)) {
+        return errorToJsonValue(value as Error, seen, depth)
     }
 
     seen.add(value)

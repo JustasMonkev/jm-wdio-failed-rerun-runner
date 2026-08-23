@@ -79,8 +79,27 @@ export function getRecordIdentity(record: FailedTestRecord) {
     return `${getFailureKey(record)}\0${record.cid ?? ''}`
 }
 
-// Identifies a test across attempts. Deliberately excludes the worker id: a rerun runs in
-// a fresh worker, so matching initial failures against rerun records must ignore it.
+// Identifies one test's execution under one capability, for matching a rerun's records
+// against the failures it targeted.
+//
+// WebdriverIO's cid is `<capabilityIndex>-<runCounter>`, and only the capability index is
+// stable across attempts - a rerun launches fresh workers, so the counter differs. Keying
+// on the whole cid would make every rerun look like it ran nothing; ignoring the cid
+// entirely would let one capability's pass vouch for another capability that never ran.
+export function getExecutionKey(record: FailedTestRecord) {
+    return `${getFailureKey(record)}\0${getCapabilityId(record.cid)}`
+}
+
+function getCapabilityId(cid: string | undefined) {
+    if (!cid) {
+        return ''
+    }
+
+    const separator = cid.indexOf('-')
+    return separator === -1 ? cid : cid.slice(0, separator)
+}
+
+// Identifies a test across attempts, ignoring which worker ran it.
 export function getFailureKey(record: FailedTestRecord) {
     return `${record.framework}\0${record.spec}\0${record.fullTitle}`
 }

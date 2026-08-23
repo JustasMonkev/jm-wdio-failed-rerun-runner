@@ -361,3 +361,130 @@ describe('a rerun that recorded nothing is never read as a recovery', () => {
         expect(result.summary.notExecuted.map((test) => test.fullTitle)).toEqual(['suite t'])
     })
 })
+
+describe('execution evidence is scoped to the capability that produced it', () => {
+    it('does not let one capability\'s pass vouch for another that never ran', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'login.e2e.ts')
+        const previous = process.env.WDIO_WORKER_ID
+        let runs = 0
+
+        const record = async (args: FailedRerunRunArgs, cid: string, passed: boolean) => {
+            process.env.WDIO_WORKER_ID = cid
+            const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
+            await service.afterTest({
+                title: 'signs in',
+                fullTitle: 'login signs in',
+                file: spec
+            } as never, {}, {
+                passed,
+                duration: 1,
+                retries: { attempts: 0, limit: 0 }
+            } as never)
+        }
+
+        try {
+            const result = await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+                cwd: workspace,
+                quiet: true,
+                run: async (_configPath, args) => {
+                    runs++
+
+                    if (runs === 1) {
+                        // The same test fails under two capabilities.
+                        await record(args, '0-0', false)
+                        await record(args, '1-0', false)
+                        return 1
+                    }
+
+                    // Only the first capability reruns and passes; the second never runs.
+                    await record(args, '0-0', true)
+                    return 0
+                }
+            })
+
+            expect(result.exitCode).toBe(1)
+            expect(result.summary.flaky).toHaveLength(1)
+            expect(result.summary.notExecuted).toHaveLength(1)
+            expect(result.summary.notExecuted[0].cid).toBe('1-0')
+        } finally {
+            if (previous === undefined) {
+                delete process.env.WDIO_WORKER_ID
+            } else {
+                process.env.WDIO_WORKER_ID = previous
+            }
+        }
+    })
+
+    it('matches a rerun to the failure it targets across differing run counters', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'login.e2e.ts')
+        const previous = process.env.WDIO_WORKER_ID
+        let runs = 0
+
+        try {
+            const result = await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+                cwd: workspace,
+                quiet: true,
+                run: async (_configPath, args) => {
+                    runs++
+                    // WebdriverIO's cid is `<capabilityIndex>-<runCounter>`; only the
+                    // capability index is stable between attempts.
+                    process.env.WDIO_WORKER_ID = runs === 1 ? '0-3' : '0-0'
+
+                    const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
+                    await service.afterTest({
+                        title: 'signs in',
+                        fullTitle: 'login signs in',
+                        file: spec
+                    } as never, {}, {
+                        passed: runs > 1,
+                        duration: 1,
+                        retries: { attempts: 0, limit: 0 }
+                    } as never)
+
+                    return runs > 1 ? 0 : 1
+                }
+            })
+
+            expect(result.exitCode).toBe(0)
+            expect(result.summary.notExecuted).toEqual([])
+            expect(result.summary.flaky.map((test) => test.fullTitle)).toEqual(['login signs in'])
+        } finally {
+            if (previous === undefined) {
+                delete process.env.WDIO_WORKER_ID
+            } else {
+                process.env.WDIO_WORKER_ID = previous
+            }
+        }
+    })
+})
+
+describe('serialization survives a hostile prototype chain', () => {
+    it('records the failure when a Proxy refuses getPrototypeOf', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'failures.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+
+        // `instanceof` walks the prototype chain, so this throws before any guarded
+        // traversal begins.
+        const hostile = new Proxy({}, {
+            getPrototypeOf() {
+                throw new Error('no prototype for you')
+            }
+        })
+
+        await expect(service.afterTest(
+            { title: 't', fullTitle: 'suite t', file: 'specs/a.e2e.ts' } as never,
+            {},
+            {
+                passed: false,
+                duration: 1,
+                error: Object.assign(new Error('boom'), { hostile }),
+                retries: { attempts: 0, limit: 0 }
+            } as never
+        )).resolves.toBeUndefined()
+
+        expect(await readFailedTests(manifestPath)).toHaveLength(1)
+    })
+})
