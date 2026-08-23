@@ -62,9 +62,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **One capability's pass vouched for another that never ran.** Execution evidence was
   matched on framework, spec and title alone, so when the same test failed under two
   capabilities and only one reran and passed, both were treated as recovered and the run
-  exited `0`. Matching is now scoped to the capability: WebdriverIO's cid is
-  `<capabilityIndex>-<runCounter>`, and only the capability index is stable between
-  attempts — using the whole cid would make every rerun look like it ran nothing.
+  exited `0`. Matching is now scoped to a fingerprint of the resolved capability, so it
+  remains correct even when a config replaces or reorders capabilities between attempts.
+  The fingerprint is canonical across object key order and hashed so provider credentials
+  are not written to the manifest. Older records fall back to the stable slot portion of
+  WebdriverIO's `<capabilityIndex>-<runCounter>` worker id.
 - **A Proxy could still escape error serialization.** `instanceof Error` walks the
   prototype chain, so a Proxy that throws from `getPrototypeOf` failed before the guarded
   traversal began and took the failure record with it.
@@ -73,10 +75,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inversion and therefore EXCLUDED the failed test while running everything else, so
   the target could never recover no matter how many rounds were configured. Inversion
   is now explicitly disabled when the focused filter is installed.
-- **A rerun that failed without recording anything was read as a recovery.** Whether it
-  crashed or two tests sharing a full title collided in the manifest, such a rerun says
-  nothing about whether the targeted test passed; it is now reported as having produced
-  no result rather than as flaky.
+- **A non-test process failure hid recorded recoveries.** A focused test could pass and be
+  recorded, then a teardown, reporter, or service failure could make WebdriverIO exit
+  nonzero; the summary discarded the pass and called the test unexecuted. Test outcomes
+  are now classified from their execution records independently of the process exit code,
+  while the infrastructure failure still keeps the overall result red.
 - **A title accessor that threw on read still killed the hook.** Guarding only the
   invocation left the property read itself unprotected, so a partially initialised
   runnable exposing `fullTitle` as a throwing getter lost the failure record.

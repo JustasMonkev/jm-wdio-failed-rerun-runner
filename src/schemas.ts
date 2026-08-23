@@ -35,6 +35,7 @@ export const failedTestRecordSchema: z.ZodType<FailedTestRecord> = z.object({
     fullTitle: z.string().min(1),
     title: z.string().optional(),
     cid: z.string().optional(),
+    capabilityFingerprint: z.string().min(1).optional(),
     outcome: failedRerunOutcomeSchema.optional(),
     error: failedTestErrorSchema.optional()
 }).strict()

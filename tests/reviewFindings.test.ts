@@ -391,8 +391,8 @@ describe('a focused rerun cannot be inverted away', () => {
     })
 })
 
-describe('a rerun that recorded nothing is never read as a recovery', () => {
-    it('does not call a test flaky when the rerun failed without recording it', async () => {
+describe('a rerun process failure is separate from its test outcomes', () => {
+    it('keeps a recorded recovery when teardown makes the rerun exit nonzero', async () => {
         const workspace = await makeTempDir()
         const spec = path.join(workspace, 'a.e2e.ts')
         let runs = 0
@@ -417,9 +417,8 @@ describe('a rerun that recorded nothing is never read as a recovery', () => {
                     return 1
                 }
 
-                // The rerun executed the test but reported failure without recording which
-                // one - a crash, or two tests sharing a full title colliding in the
-                // manifest. It proves nothing about whether the target recovered.
+                // The focused test passed, but an unrelated teardown, reporter, or service
+                // failure made the WebdriverIO process exit nonzero afterwards.
                 const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
                 await service.afterTest({
                     title: 't',
@@ -435,8 +434,8 @@ describe('a rerun that recorded nothing is never read as a recovery', () => {
         })
 
         expect(result.exitCode).toBe(1)
-        expect(result.summary.flaky).toEqual([])
-        expect(result.summary.notExecuted.map((test) => test.fullTitle)).toEqual(['suite t'])
+        expect(result.summary.flaky.map((test) => test.fullTitle)).toEqual(['suite t'])
+        expect(result.summary.notExecuted).toEqual([])
     })
 })
 
@@ -506,8 +505,9 @@ describe('execution evidence is scoped to the capability that produced it', () =
                 quiet: true,
                 run: async (_configPath, args) => {
                     runs++
-                    // WebdriverIO's cid is `<capabilityIndex>-<runCounter>`; only the
-                    // capability index is stable between attempts.
+                    // Without a capability fingerprint, WebdriverIO's
+                    // `<capabilityIndex>-<runCounter>` cid falls back to its slot; the run
+                    // counter changes for every fresh worker.
                     process.env.WDIO_WORKER_ID = runs === 1 ? '0-3' : '0-0'
 
                     const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
@@ -535,6 +535,123 @@ describe('execution evidence is scoped to the capability that produced it', () =
                 process.env.WDIO_WORKER_ID = previous
             }
         }
+    })
+
+    it('does not let a replacement capability in the same slot prove recovery', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'login.e2e.ts')
+        const previous = process.env.WDIO_WORKER_ID
+        let runs = 0
+
+        try {
+            const result = await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+                cwd: workspace,
+                quiet: true,
+                run: async (_configPath, args) => {
+                    runs++
+                    process.env.WDIO_WORKER_ID = '0-0'
+
+                    const capabilities = { browserName: runs === 1 ? 'firefox' : 'chrome' }
+                    const service = new FailedTestRerunService(
+                        getServiceOptions(args),
+                        capabilities,
+                        {} as WebdriverIO.Config
+                    )
+                    await service.afterTest({
+                        title: 'signs in',
+                        fullTitle: 'login signs in',
+                        file: spec
+                    } as never, {}, {
+                        passed: runs > 1,
+                        duration: 1,
+                        retries: { attempts: 0, limit: 0 }
+                    } as never)
+
+                    return runs > 1 ? 0 : 1
+                }
+            })
+
+            expect(result.exitCode).toBe(1)
+            expect(result.summary.flaky).toEqual([])
+            expect(result.summary.notExecuted.map((test) => test.fullTitle)).toEqual(['login signs in'])
+        } finally {
+            if (previous === undefined) {
+                delete process.env.WDIO_WORKER_ID
+            } else {
+                process.env.WDIO_WORKER_ID = previous
+            }
+        }
+    })
+
+    it('follows a capability when its slot changes between attempts', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'login.e2e.ts')
+        const previous = process.env.WDIO_WORKER_ID
+        let runs = 0
+
+        try {
+            const result = await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+                cwd: workspace,
+                quiet: true,
+                run: async (_configPath, args) => {
+                    runs++
+                    process.env.WDIO_WORKER_ID = runs === 1 ? '0-0' : '1-0'
+
+                    const capabilities = runs === 1
+                        ? { browserName: 'firefox', platformName: 'linux' }
+                        : { platformName: 'linux', browserName: 'firefox' }
+                    const service = new FailedTestRerunService(
+                        getServiceOptions(args),
+                        capabilities,
+                        {} as WebdriverIO.Config
+                    )
+                    await service.afterTest({
+                        title: 'signs in',
+                        fullTitle: 'login signs in',
+                        file: spec
+                    } as never, {}, {
+                        passed: runs > 1,
+                        duration: 1,
+                        retries: { attempts: 0, limit: 0 }
+                    } as never)
+
+                    return runs > 1 ? 0 : 1
+                }
+            })
+
+            expect(result.exitCode).toBe(0)
+            expect(result.summary.notExecuted).toEqual([])
+            expect(result.summary.flaky.map((test) => test.fullTitle)).toEqual(['login signs in'])
+        } finally {
+            if (previous === undefined) {
+                delete process.env.WDIO_WORKER_ID
+            } else {
+                process.env.WDIO_WORKER_ID = previous
+            }
+        }
+    })
+
+    it('falls back to the worker slot when capabilities cannot be fingerprinted', async () => {
+        const manifestPath = path.join(await makeTempDir(), 'manifest.ndjson')
+        const capabilities: Record<string, unknown> = { browserName: 'firefox' }
+        capabilities.self = capabilities
+        const service = new FailedTestRerunService(
+            { manifestPath },
+            capabilities as WebdriverIO.Capabilities,
+            {} as WebdriverIO.Config
+        )
+
+        await service.afterTest({
+            title: 'signs in',
+            fullTitle: 'login signs in',
+            file: 'specs/login.e2e.ts'
+        } as never, {}, {
+            passed: false,
+            duration: 1,
+            retries: { attempts: 0, limit: 0 }
+        } as never)
+
+        expect((await readManifest(manifestPath))[0].capabilityFingerprint).toBeUndefined()
     })
 })
 

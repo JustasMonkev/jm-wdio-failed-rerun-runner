@@ -20,6 +20,7 @@ export interface FailedTestRecord {
     fullTitle: string
     title?: string
     cid?: string
+    capabilityFingerprint?: string
     // Absent on manifests written before outcome tracking existed; those only ever
     // contained failures, so a missing value reads as 'failed'.
     outcome?: FailedRerunOutcome

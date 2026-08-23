@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import type { Frameworks, Services } from '@wdio/types'
 
 import { appendFailedTest } from '#src/manifest'
@@ -10,6 +12,7 @@ import {
 import type { FailedRerunServiceOptions, FailedTestRecord } from '#src/types'
 
 export default class FailedTestRerunService implements Services.ServiceInstance {
+    readonly #capabilityFingerprint?: string
     public readonly options: FailedRerunServiceOptions
     public readonly capabilities?: WebdriverIO.Capabilities
     public readonly config?: WebdriverIO.Config
@@ -27,6 +30,7 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
         this.options = parsedOptions.data
         this.capabilities = capabilities
         this.config = config
+        this.#capabilityFingerprint = fingerprintCapabilities(capabilities)
     }
 
     // A skipped test reaches this hook as `passed: false`, and recording that as a failure
@@ -79,6 +83,7 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
         return {
             attempt: this.options.attempt || 'initial',
             cid: process.env.WDIO_WORKER_ID,
+            capabilityFingerprint: this.#capabilityFingerprint,
             framework: this.#framework(),
             outcome: skipped ? 'skipped' as const : (passed ? 'passed' as const : 'failed' as const)
         }
@@ -145,4 +150,32 @@ function willBeRetriedByWdioScenario(world: Frameworks.World) {
 function readNestedProperty(value: object, key: string, nestedKey: string) {
     const nested = readProperty(value, key)
     return nested && typeof nested === 'object' ? readProperty(nested, nestedKey) : undefined
+}
+
+// The worker id identifies only a slot in the current capability array, which a config
+// may reorder between attempts. Hashing a canonical form follows the actual capability
+// without writing credentials from vendor options into the manifest.
+function fingerprintCapabilities(capabilities: WebdriverIO.Capabilities | undefined) {
+    try {
+        const serialized = JSON.stringify(capabilities, sortObjectKeys)
+        if (!serialized || serialized === '{}') {
+            return undefined
+        }
+
+        return createHash('sha256').update(serialized).digest('hex')
+    } catch {
+        return undefined
+    }
+}
+
+function sortObjectKeys(_key: string, value: unknown) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return value
+    }
+
+    const sorted: Record<string, unknown> = {}
+    for (const key of Object.keys(value).sort()) {
+        sorted[key] = (value as Record<string, unknown>)[key]
+    }
+    return sorted
 }

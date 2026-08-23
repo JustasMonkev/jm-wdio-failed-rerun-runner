@@ -110,14 +110,15 @@ export function dedupeFailedTests(records: FailedTestRecord[]) {
 // Identifies one test under one capability. Used both to deduplicate records and to match
 // a rerun's records against the failures it targeted.
 //
-// WebdriverIO's cid is `<capabilityIndex>-<runCounter>`, and only the capability index
-// carries meaning here. The counter changes whenever a new worker starts - a focused
-// rerun, or a `specFileRetries` attempt - so keying on the whole cid would both make every
-// rerun look like it ran nothing and keep a stale failure alive after WebdriverIO's own
-// retry passed. Ignoring the cid entirely would instead let one capability's pass vouch
-// for another capability that never ran.
+// A capability fingerprint stays attached to the browser when a config replaces or
+// reorders its capability array between attempts. Older records have no fingerprint, so
+// they fall back to WebdriverIO's cid. Its `<capabilityIndex>-<runCounter>` form requires
+// dropping the run counter: that part changes for every fresh worker and spec-file retry.
 export function getExecutionKey(record: FailedTestRecord) {
-    return `${getFailureKey(record)}\0${getCapabilityId(record.cid)}`
+    const capability = record.capabilityFingerprint
+        ? `fingerprint:${record.capabilityFingerprint}`
+        : `slot:${getCapabilityId(record.cid)}`
+    return `${getFailureKey(record)}\0${capability}`
 }
 
 function getCapabilityId(cid: string | undefined) {

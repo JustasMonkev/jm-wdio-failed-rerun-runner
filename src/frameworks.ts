@@ -12,6 +12,7 @@ import type {
 interface RecordContext {
     attempt: FailedRerunAttemptType
     cid?: string
+    capabilityFingerprint?: string
     framework?: FailedRerunFramework
     outcome?: FailedRerunOutcome
 }
@@ -70,6 +71,7 @@ export function createMochaFailedTestRecord(
         title: parseNonEmptyString(readProperty(test, 'title'))
             ?? parseNonEmptyString(readProperty(test, 'description')),
         cid: context.cid,
+        capabilityFingerprint: context.capabilityFingerprint,
         ...passedOutcome(context),
         error: serializeError(readProperty(result, 'error'))
     }
@@ -94,6 +96,7 @@ export function createCucumberFailedScenarioRecord(
         fullTitle: scenarioName,
         title: scenarioName,
         cid: context.cid,
+        capabilityFingerprint: context.capabilityFingerprint,
         ...passedOutcome(context),
         error: serializeError(readProperty(result, 'error'))
     }

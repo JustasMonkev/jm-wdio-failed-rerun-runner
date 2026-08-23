@@ -43,15 +43,11 @@ export function summarize(
 
         const failed = new Set(attempt.failures.map(getFailureKeyForSummary))
         const missing = new Set(attempt.notExecuted.map(getFailureKeyForSummary))
-        // The run reported failure yet recorded nothing: it crashed, or records collided
-        // because two tests share a full title. Either way it says nothing about whether
-        // the targeted tests recovered, so it must not be read as a pass.
-        const inconclusive = attempt.exitCode !== 0 && attempt.failures.length === 0
 
         for (const record of attempt.targeted) {
             const key = getFailureKeyForSummary(record)
 
-            if (missing.has(key) || (inconclusive && !failed.has(key))) {
+            if (missing.has(key)) {
                 latest.set(key, 'noResult')
                 noResultRecords.set(key, record)
                 continue
