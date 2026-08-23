@@ -105,12 +105,23 @@ async function createConfigWithExtraServices(configPath: string, services: NonNu
     // injection sends every normal run through this wrapper, so that would fail a config
     // WebdriverIO itself would have loaded. A file URL carries the literal path through.
     //
-    // Every attempt runs in this same process, so without the query Node's module registry
-    // would hand a rerun the config object the initial attempt evaluated - stale for any
-    // config that reads the rerun environment at module scope. The wrapper's own id makes
-    // each attempt a distinct module. A CommonJS config is cached by filename whatever the
-    // query says, which is equally true of how WebdriverIO loads it without this wrapper.
-    return writeWrapper(wrapperPath, `const baseModule = await import(${JSON.stringify(`${pathToFileURL(configPath).href}?wdio-failed-rerun=${wrapperId}`)})
+    // Every attempt runs in this same process, so without this Node's module registry would
+    // hand a rerun the config object the initial attempt evaluated - stale for any config
+    // that reads the rerun environment at module scope. Two registries have to be dealt
+    // with: the ESM one is keyed by URL, so the wrapper's own id makes each attempt a
+    // distinct module, while a CommonJS config is keyed by filename and ignores the query
+    // entirely - which covers `.cjs`, `.js` outside an ES module package, and TypeScript
+    // compiled to CommonJS. Dropping its cache entry first is what makes those reload.
+    return writeWrapper(wrapperPath, `import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
+try {
+    delete require.cache[require.resolve(${JSON.stringify(configPath)})]
+} catch {
+    // An ES-module config has no CommonJS cache entry to drop; the query handles it.
+}
+
+const baseModule = await import(${JSON.stringify(`${pathToFileURL(configPath).href}?wdio-failed-rerun=${wrapperId}`)})
 const baseConfig = baseModule.config || baseModule.default?.config || baseModule.default || {}
 const extraServices = ${serializedServices}
 

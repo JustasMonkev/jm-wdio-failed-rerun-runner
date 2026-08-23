@@ -265,17 +265,25 @@ describe('WDIO launcher adapter', () => {
         }
     })
 
-    it('re-evaluates a config that reads the rerun environment on every attempt', async () => {
+    // Two module registries cache a config: the ESM one by URL, the CommonJS one by
+    // filename. A query defeats only the first, so each of these shapes has to be covered.
+    it.each([
+        ['an ES module config', 'module', 'wdio.conf.mjs', false],
+        ['a CommonJS config', undefined, 'wdio.conf.js', true],
+        ['an explicitly CommonJS config', 'module', 'wdio.conf.cjs', true],
+        ['a TypeScript config compiled to CommonJS', undefined, 'wdio.conf.ts', false]
+    ])('re-evaluates %s that reads the rerun environment on every attempt', async (_label, type, configName, commonjs) => {
         // Every attempt runs in one process, so this has to load both wrappers in one
         // process too. Spawning a fresh Node per attempt would clear the module registry
         // and pass whether or not the base import is cache-busted.
         const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wdio-launcher-cache-'))
-        const configPath = path.join(workspace, 'wdio.conf.mjs')
+        const configPath = path.join(workspace, configName)
 
         await fs.writeFile(path.join(workspace, 'package.json'),
-            JSON.stringify({ name: 'p', private: true, type: 'module' }))
-        await fs.writeFile(configPath,
-            'export const config = { retryAttempt: process.env.WDIO_FAILED_RERUN_RETRY }\n')
+            JSON.stringify({ name: 'p', private: true, ...(type ? { type } : {}) }))
+        await fs.writeFile(configPath, commonjs
+            ? 'exports.config = { retryAttempt: process.env.WDIO_FAILED_RERUN_RETRY }\n'
+            : 'export const config = { retryAttempt: process.env.WDIO_FAILED_RERUN_RETRY }\n')
 
         const wrappers: string[] = []
 
@@ -285,7 +293,7 @@ describe('WDIO launcher adapter', () => {
             async run() {
                 // Keep each attempt's generated wrapper: the runner deletes it, and both
                 // are needed alive at once to replay them in a single process.
-                const kept = path.join(workspace, `kept-${wrappers.length}.mjs`)
+                const kept = path.join(workspace, `kept-${wrappers.length}${path.extname(this.configPath)}`)
                 await fs.copyFile(this.configPath, kept)
                 wrappers.push(kept)
                 return 0
@@ -300,6 +308,7 @@ describe('WDIO launcher adapter', () => {
             await run(configPath, args as never)
 
             const { stdout } = await promisify(execFile)(process.execPath, [
+                '--import', pathToFileURL(require.resolve('tsx')).href,
                 '--input-type=module',
                 '-e',
                 `const { pathToFileURL } = await import('node:url')
