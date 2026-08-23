@@ -62,10 +62,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **One capability's pass vouched for another that never ran.** Execution evidence was
   matched on framework, spec and title alone, so when the same test failed under two
   capabilities and only one reran and passed, both were treated as recovered and the run
-  exited `0`. Matching is now scoped to a fingerprint of the resolved capability, so it
-  remains correct even when a config replaces or reorders capabilities between attempts.
-  The fingerprint is canonical across object key order and hashed so provider credentials
-  are not written to the manifest. Older records fall back to the stable slot portion of
+  exited `0`. Matching is now scoped to a fingerprint of stable browser and device fields,
+  so it remains correct even when a config replaces or reorders capabilities between
+  attempts, while rerun-specific build/session labels do not change the identity. The
+  fingerprint is canonical across object key order and hashed so provider credentials are
+  not written to the manifest. Older records fall back to the stable slot portion of
   WebdriverIO's `<capabilityIndex>-<runCounter>` worker id.
 - **A Proxy could still escape error serialization.** `instanceof Error` walks the
   prototype chain, so a Proxy that throws from `getPrototypeOf` failed before the guarded

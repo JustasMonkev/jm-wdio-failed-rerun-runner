@@ -551,7 +551,12 @@ describe('execution evidence is scoped to the capability that produced it', () =
                     runs++
                     process.env.WDIO_WORKER_ID = '0-0'
 
-                    const capabilities = { browserName: runs === 1 ? 'firefox' : 'chrome' }
+                    const capabilities = {
+                        'bstack:options': {
+                            browser: runs === 1 ? 'firefox' : 'chrome',
+                            os: 'linux'
+                        }
+                    }
                     const service = new FailedTestRerunService(
                         getServiceOptions(args),
                         capabilities,
@@ -583,7 +588,7 @@ describe('execution evidence is scoped to the capability that produced it', () =
         }
     })
 
-    it('follows a capability when its slot changes between attempts', async () => {
+    it('follows a capability when its slot and rerun metadata change', async () => {
         const workspace = await makeTempDir()
         const spec = path.join(workspace, 'login.e2e.ts')
         const previous = process.env.WDIO_WORKER_ID
@@ -598,8 +603,16 @@ describe('execution evidence is scoped to the capability that produced it', () =
                     process.env.WDIO_WORKER_ID = runs === 1 ? '0-0' : '1-0'
 
                     const capabilities = runs === 1
-                        ? { browserName: 'firefox', platformName: 'linux' }
-                        : { platformName: 'linux', browserName: 'firefox' }
+                        ? {
+                            browserName: 'firefox',
+                            platformName: 'linux',
+                            'bstack:options': { buildName: 'initial', sessionName: 'full suite' }
+                        }
+                        : {
+                            platformName: 'linux',
+                            browserName: 'firefox',
+                            'bstack:options': { sessionName: 'focused rerun', buildName: 'retry 1' }
+                        }
                     const service = new FailedTestRerunService(
                         getServiceOptions(args),
                         capabilities,
@@ -652,6 +665,10 @@ describe('execution evidence is scoped to the capability that produced it', () =
         } as never)
 
         expect((await readManifest(manifestPath))[0].capabilityFingerprint).toBeUndefined()
+    })
+
+    it('still rejects service options without a manifest path', () => {
+        expect(() => new FailedTestRerunService({} as never)).toThrow('manifestPath')
     })
 })
 

@@ -153,29 +153,75 @@ function readNestedProperty(value: object, key: string, nestedKey: string) {
 }
 
 // The worker id identifies only a slot in the current capability array, which a config
-// may reorder between attempts. Hashing a canonical form follows the actual capability
-// without writing credentials from vendor options into the manifest.
+// may reorder between attempts. Hash stable browser and device fields so changing a
+// rerun's build/session labels does not change identity, and credentials never reach the
+// manifest.
 function fingerprintCapabilities(capabilities: WebdriverIO.Capabilities | undefined) {
     try {
-        const serialized = JSON.stringify(capabilities, sortObjectKeys)
-        if (!serialized || serialized === '{}') {
+        const identity = selectCapabilityIdentity(capabilities)
+        if (!identity) {
             return undefined
         }
 
-        return createHash('sha256').update(serialized).digest('hex')
+        return createHash('sha256').update(JSON.stringify(identity)).digest('hex')
     } catch {
         return undefined
     }
 }
 
-function sortObjectKeys(_key: string, value: unknown) {
+const CAPABILITY_IDENTITY_KEYS = new Set([
+    'app',
+    'appPackage',
+    'arch',
+    'automationName',
+    'binary',
+    'browser',
+    'browser_version',
+    'browserName',
+    'browserVersion',
+    'bundleId',
+    'device',
+    'deviceName',
+    'isRealMobile',
+    'os',
+    'os_version',
+    'osVersion',
+    'platform',
+    'platformName',
+    'platformVersion',
+    'realDevice',
+    'realMobile',
+    'udid'
+])
+
+function selectCapabilityIdentity(value: unknown, ancestors = new WeakSet<object>()): unknown {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return value
+        return undefined
     }
 
-    const sorted: Record<string, unknown> = {}
-    for (const key of Object.keys(value).sort()) {
-        sorted[key] = (value as Record<string, unknown>)[key]
+    if (ancestors.has(value)) {
+        throw new TypeError('Circular capability')
     }
-    return sorted
+
+    ancestors.add(value)
+    try {
+        const selected: Record<string, unknown> = {}
+        for (const key of Object.keys(value).sort()) {
+            const entry = (value as Record<string, unknown>)[key]
+            const unnamespacedKey = key.slice(key.lastIndexOf(':') + 1)
+            if (CAPABILITY_IDENTITY_KEYS.has(unnamespacedKey)) {
+                selected[key] = entry
+                continue
+            }
+
+            const nested = selectCapabilityIdentity(entry, ancestors)
+            if (nested !== undefined) {
+                selected[key] = nested
+            }
+        }
+
+        return Object.keys(selected).length > 0 ? selected : undefined
+    } finally {
+        ancestors.delete(value)
+    }
 }
