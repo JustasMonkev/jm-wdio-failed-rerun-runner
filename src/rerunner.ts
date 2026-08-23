@@ -255,10 +255,10 @@ async function runRerunPlan(
         type: 'rerun' as const
     }
 
-    if (plan.framework === 'mocha') {
+    if (plan.framework === 'mocha' || plan.framework === 'jasmine') {
         return {
             ...rerunAttempt,
-            framework: 'mocha',
+            framework: plan.framework,
             grep: plan.grep
         }
     }
@@ -273,7 +273,7 @@ async function runRerunPlan(
 function createRerunArgs(baseArgs: FailedRerunRunArgs, plan: RerunPlan, manifestPath: string) {
     const frameworkArgs = plan.framework === 'cucumber'
         ? createCucumberRerunArgs(baseArgs, plan)
-        : createMochaRerunArgs(baseArgs, plan)
+        : createTitleGrepRerunArgs(baseArgs, plan)
 
     return withFailureService(frameworkArgs, {
         manifestPath,
@@ -281,7 +281,24 @@ function createRerunArgs(baseArgs: FailedRerunRunArgs, plan: RerunPlan, manifest
     })
 }
 
-function createMochaRerunArgs(baseArgs: FailedRerunRunArgs, plan: Extract<RerunPlan, { framework: 'mocha' }>) {
+// Mocha and Jasmine both filter by full test name, under their own options key.
+// Jasmine matches `jasmineOpts.grep` against `spec.getFullName()` with `new RegExp(grep)`,
+// so the same anchored pattern works for both.
+function createTitleGrepRerunArgs(
+    baseArgs: FailedRerunRunArgs,
+    plan: Extract<RerunPlan, { framework: 'mocha' | 'jasmine' }>
+) {
+    if (plan.framework === 'jasmine') {
+        return {
+            ...baseArgs,
+            spec: plan.specs,
+            jasmineOpts: {
+                ...(baseArgs.jasmineOpts || {}),
+                grep: plan.grep
+            }
+        }
+    }
+
     return {
         ...baseArgs,
         spec: plan.specs,

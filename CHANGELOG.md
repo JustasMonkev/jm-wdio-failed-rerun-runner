@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Jasmine support.** Jasmine failures were silently dropped: WebdriverIO spreads
+  Jasmine's own spec result into `afterTest`, which carries `fullName`/`description`
+  rather than Mocha's `fullTitle`/`title`, so no record had a usable title and no
+  rerun ever happened. The framework is now read from the WebdriverIO config, and
+  reruns filter with `jasmineOpts.grep`.
 - Rerun progress output and a closing summary separating tests that recovered
   (`flaky`) from tests that stayed broken (`broken`), plus `notExecuted`. The same
   breakdown is exposed on `result.summary`; `--quiet` silences it.

@@ -1,5 +1,6 @@
 import type {
     CucumberRerunSpecPlan,
+    JasmineRerunSpecPlan,
     FailedRerunFramework,
     FailedTestRecord,
     MochaRerunSpecPlan,
@@ -41,12 +42,26 @@ function createRerunSpecPlan(tests: FailedTestRecord[]): RerunSpecPlan {
         return createCucumberRerunSpecPlan(firstTest.spec, tests)
     }
 
+    if (firstTest.framework === 'jasmine') {
+        return createJasmineRerunSpecPlan(firstTest.spec, tests)
+    }
+
     return createMochaRerunSpecPlan(firstTest.spec, tests)
 }
 
 function createMochaRerunSpecPlan(spec: string, tests: FailedTestRecord[]): MochaRerunSpecPlan {
     return {
         framework: 'mocha',
+        spec,
+        specs: [spec],
+        tests,
+        grep: buildExactTitleGrep(tests.map((test) => test.fullTitle))
+    }
+}
+
+function createJasmineRerunSpecPlan(spec: string, tests: FailedTestRecord[]): JasmineRerunSpecPlan {
+    return {
+        framework: 'jasmine',
         spec,
         specs: [spec],
         tests,

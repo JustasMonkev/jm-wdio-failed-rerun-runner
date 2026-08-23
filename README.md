@@ -80,6 +80,8 @@ process.exit(result.exitCode)
 
 ## How It Works
 
+Supported frameworks: Mocha, Jasmine and Cucumber.
+
 1. The launcher sets `WDIO_FAILED_RERUN_RETRY=0` and injects `FailedTestRerunService` into the first WDIO run. The service is injected by the absolute path of the built service entry (exported as `FAILED_RERUN_SERVICE_PATH`), so it loads regardless of the installed package name. Because the path points into the package's `build` directory on disk, bundling this package into another artifact is not supported.
 2. The worker service records failed Mocha `afterTest` events and Cucumber `afterScenario` events into an NDJSON manifest.
 3. If the first run passes, the launcher exits with `0` and does not rerun anything.
@@ -181,6 +183,11 @@ const rerunner = createFailedTestsRerunner({
 ## Framework Support
 
 Mocha failures are selected by full title with `mochaOpts.grep`.
+
+Jasmine failures are selected by full name with `jasmineOpts.grep`, which Jasmine matches
+against `spec.getFullName()`. The framework is read from the WebdriverIO config, because
+Mocha and Jasmine share the `afterTest` hook but expose different fields on its payload and
+take different filter options.
 
 Cucumber scenario failures are selected by scenario name with `cucumberOpts.name`, passed as
 anchored strings. WebdriverIO forwards launcher arguments to worker processes with

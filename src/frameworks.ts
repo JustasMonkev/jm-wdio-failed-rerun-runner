@@ -4,6 +4,7 @@ import * as z from 'zod'
 import { serializeError } from '#src/errors'
 import type {
     FailedRerunAttemptType,
+    FailedRerunFramework,
     FailedRerunOutcome,
     FailedTestRecord
 } from '#src/types'
@@ -11,6 +12,7 @@ import type {
 interface RecordContext {
     attempt: FailedRerunAttemptType
     cid?: string
+    framework?: FailedRerunFramework
     outcome?: FailedRerunOutcome
 }
 
@@ -46,8 +48,11 @@ export function createMochaFailedTestRecord(
     context: RecordContext,
     testContext?: unknown
 ): FailedTestRecord | undefined {
+    const framework = context.framework === 'jasmine' ? 'jasmine' : 'mocha'
     const spec = getSpecFile(test)
-    const fullTitle = getMochaFullTitle(test, testContext)
+    const fullTitle = framework === 'jasmine'
+        ? getJasmineFullTitle(test)
+        : getMochaFullTitle(test, testContext)
 
     if (!spec || !fullTitle) {
         return undefined
@@ -55,10 +60,10 @@ export function createMochaFailedTestRecord(
 
     return {
         attempt: context.attempt,
-        framework: 'mocha',
+        framework,
         spec,
         fullTitle,
-        title: test.title,
+        title: test.title || parseNonEmptyString(readProperty(test, 'description')),
         cid: context.cid,
         ...passedOutcome(context),
         error: serializeError(result.error)
@@ -98,6 +103,14 @@ function passedOutcome(context: RecordContext) {
 
 function getSpecFile(test: Frameworks.Test) {
     return parseNonEmptyString(test.file)
+}
+
+// `@wdio/jasmine-framework` hands `afterTest` a spread of Jasmine's own spec result,
+// which carries `fullName` (what `jasmineOpts.grep` is matched against) and `description`
+// rather than Mocha's `fullTitle`/`title`.
+function getJasmineFullTitle(test: Frameworks.Test) {
+    return parseNonEmptyString(readProperty(test, 'fullName'))
+        || parseNonEmptyString(readProperty(test, 'fullTitle'))
 }
 
 function getMochaFullTitle(test: Frameworks.Test, testContext?: unknown) {

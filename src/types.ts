@@ -4,7 +4,7 @@ import type { FailedRerunLogger } from '#src/reporter'
 
 export type FailedRerunAttemptType = 'initial' | 'rerun'
 export type FailedRerunOutcome = 'failed' | 'passed'
-export type FailedRerunFramework = 'mocha' | 'cucumber'
+export type FailedRerunFramework = 'mocha' | 'jasmine' | 'cucumber'
 export type FailedRerunJsonValue =
     | string
     | number
@@ -43,6 +43,7 @@ export interface FailedRerunRunArgs {
     spec?: string[]
     services?: Services.ServiceEntry[]
     mochaOpts?: WebdriverIO.MochaOpts
+    jasmineOpts?: WebdriverIO.JasmineOpts
     cucumberOpts?: WebdriverIO.CucumberOpts
     [key: string]: unknown
 }
@@ -94,9 +95,10 @@ export interface FailedRerunBrowserStackEnv {
     withRerun<T>(specs: string[], run: () => Promise<T>): Promise<T>
 }
 
-export type RerunSpecPlan = MochaRerunSpecPlan | CucumberRerunSpecPlan
+export type RerunSpecPlan = MochaRerunSpecPlan | JasmineRerunSpecPlan | CucumberRerunSpecPlan
 export type RerunPlan = RerunSpecPlan
 export type MochaRerunPlan = MochaRerunSpecPlan
+export type JasmineRerunPlan = JasmineRerunSpecPlan
 export type CucumberRerunPlan = CucumberRerunSpecPlan
 
 interface RerunSpecPlanBase {
@@ -108,6 +110,11 @@ interface RerunSpecPlanBase {
 
 export interface MochaRerunSpecPlan extends RerunSpecPlanBase {
     framework: 'mocha'
+    grep: string
+}
+
+export interface JasmineRerunSpecPlan extends RerunSpecPlanBase {
+    framework: 'jasmine'
     grep: string
 }
 
@@ -135,6 +142,15 @@ export interface FailedRerunMochaRerunAttemptResult extends FailedRerunAttemptRe
     grep: string
 }
 
+export interface FailedRerunJasmineRerunAttemptResult extends FailedRerunAttemptResultBase {
+    type: 'rerun'
+    framework: 'jasmine'
+    spec: string
+    specs: string[]
+    notExecuted: FailedTestRecord[]
+    grep: string
+}
+
 export interface FailedRerunCucumberRerunAttemptResult extends FailedRerunAttemptResultBase {
     type: 'rerun'
     framework: 'cucumber'
@@ -147,6 +163,7 @@ export interface FailedRerunCucumberRerunAttemptResult extends FailedRerunAttemp
 export type FailedRerunAttemptResult =
     | FailedRerunInitialAttemptResult
     | FailedRerunMochaRerunAttemptResult
+    | FailedRerunJasmineRerunAttemptResult
     | FailedRerunCucumberRerunAttemptResult
 
 export interface FailedRerunSummary {

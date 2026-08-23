@@ -74,8 +74,16 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
         return {
             attempt: this.options.attempt || 'initial',
             cid: process.env.WDIO_WORKER_ID,
+            framework: this.#framework(),
             outcome: passed ? 'passed' as const : 'failed' as const
         }
+    }
+
+    // Mocha and Jasmine share the `afterTest` hook but expose different fields and take
+    // different filter options, and the hook payload alone cannot tell them apart. The
+    // resolved WebdriverIO config can.
+    #framework() {
+        return this.config?.framework === 'jasmine' ? 'jasmine' as const : 'mocha' as const
     }
 
     async #appendRecord(record: FailedTestRecord | undefined) {
