@@ -25,7 +25,9 @@ CLI options:
 - `--max-reruns <count>`: maximum focused rerun rounds. Defaults to `1`.
 - `--no-pass-on-successful-rerun`: keep the initial failing exit code even when focused reruns pass.
 - `--manifest-path <path>`: write the initial-run failure manifest to a known path.
-- `--rerun-manifest-path <path>`: write rerun failure manifests to a known path.
+- `--rerun-manifest-path <path>`: write rerun failure manifests to a known path. Each rerun
+  group also writes its own `<name>.rerun-<round>-<group><ext>` file; the path you give
+  collects every rerun failure.
 - `-q`, `--quiet`: suppress rerun progress and the final summary.
 
 ## Output

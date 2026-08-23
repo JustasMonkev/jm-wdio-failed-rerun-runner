@@ -5,7 +5,14 @@ import { fileURLToPath } from 'node:url'
 
 import { processBrowserStackEnv } from '#src/browserstack'
 import { runWdio } from '#src/launcher'
-import { dedupeFailedTests, getFailureKey, readFailedTests, readManifest, resetManifest } from '#src/manifest'
+import {
+    appendFailedTest,
+    dedupeFailedTests,
+    getFailureKey,
+    readFailedTests,
+    readManifest,
+    resetManifest
+} from '#src/manifest'
 import { buildExactTitleFilters, createRerunSpecPlans } from '#src/planner'
 import {
     consoleLogger,
@@ -109,6 +116,7 @@ async function runFailedTestsRerunWithDeps(
     reportInitialFailures(initialAttempt.failures, settings.logger)
 
     const reruns = await runRerunRounds(configPath, settings, initialAttempt.failures, attempts)
+    await writeCombinedRerunManifest(settings, attempts)
     const result = createRerunResult(
         initialAttempt.exitCode,
         attempts,
@@ -396,6 +404,26 @@ async function readManifestFailures(settings: RerunSettings, manifestPath: strin
     return dedupeFailedTests(await settings.manifests.read(manifestPath))
 }
 
+// `--rerun-manifest-path` is documented as a build artifact, so the literal path the user
+// gave must end up holding every rerun failure, not just whichever group happened to run last.
+async function writeCombinedRerunManifest(settings: RerunSettings, attempts: FailedRerunAttemptResult[]) {
+    if (!settings.rerunManifestPath) {
+        return
+    }
+
+    const failures = dedupeFailedTests(
+        attempts.flatMap((attempt) => attempt.type === 'rerun' ? attempt.failures : [])
+    )
+    const combinedPath = path.isAbsolute(settings.rerunManifestPath)
+        ? settings.rerunManifestPath
+        : path.resolve(settings.cwd, settings.rerunManifestPath)
+
+    await settings.manifests.reset(combinedPath)
+    for (const failure of failures) {
+        await appendFailedTest(combinedPath, failure)
+    }
+}
+
 async function readRerunRecords(settings: RerunSettings, manifestPath: string) {
     const readAll = settings.manifests.readAll?.bind(settings.manifests)
     if (!readAll) {
@@ -426,11 +454,21 @@ async function normalizeExitCode(exitCode: ReturnType<FailedRerunRun>) {
 }
 
 function resolveManifestPath(manifestPath: string | undefined, cwd: string, label: string) {
-    if (manifestPath) {
-        return path.isAbsolute(manifestPath)
-            ? manifestPath
-            : path.resolve(cwd, manifestPath)
+    if (!manifestPath) {
+        return path.join(os.tmpdir(), `wdio-failed-rerun-${randomUUID()}-${label}.ndjson`)
     }
 
-    return path.join(os.tmpdir(), `wdio-failed-rerun-${randomUUID()}-${label}.ndjson`)
+    const absolute = path.isAbsolute(manifestPath)
+        ? manifestPath
+        : path.resolve(cwd, manifestPath)
+
+    if (label === 'initial') {
+        return absolute
+    }
+
+    // Each rerun group needs its own file: they are reset before every group, so sharing
+    // one path would leave only the last group's failures behind, and reading a shared
+    // file would let one group's records vouch for another group's tests.
+    const extension = path.extname(absolute)
+    return `${absolute.slice(0, absolute.length - extension.length)}.${label}${extension}`
 }

@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hook parameter, not under `result` where `@wdio/types` declares it.
 - Manifest dedupe kept the first record for a test, so a later `passed` entry could
   not supersede an earlier failure from an in-run retry. The last record now wins.
+- **`--rerun-manifest-path` kept only the last spec group.** Every rerun group resolved
+  to the same file and reset it first, so the documented CI artifact ended up holding
+  whichever group ran last. Groups now write their own `<name>.rerun-<round>-<group><ext>`
+  files and the given path collects all rerun failures.
 - **The CLI could report success on failure.** Exit-code handling was keyed off
   `WDIO_UNIT_TESTS`, which is `@wdio/cli`'s own variable, not this package's. With it
   exported, `process.exit` was skipped and `cli.ts` discarded `run()`'s return value,

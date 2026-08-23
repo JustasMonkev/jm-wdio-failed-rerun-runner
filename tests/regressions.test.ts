@@ -278,3 +278,45 @@ describe('tests that must not be queued for rerun', () => {
         expect(await readFailedTests(manifestPath)).toEqual([])
     })
 })
+
+describe('rerun manifest artifact', () => {
+    it('keeps every spec group, not just the last one', async () => {
+        const workspace = await makeTempDir()
+        const firstSpec = path.join(workspace, 'a.e2e.ts')
+        const secondSpec = path.join(workspace, 'b.e2e.ts')
+        const rerunManifestPath = path.join(workspace, 'rerun-failures.ndjson')
+        let runs = 0
+
+        const failTest = async (args: FailedRerunRunArgs, spec: string, fullTitle: string) => {
+            const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
+            await service.afterTest({ title: fullTitle, fullTitle, file: spec } as never, {}, {
+                passed: false,
+                duration: 1,
+                retries: { attempts: 0, limit: 0 }
+            } as never)
+        }
+
+        await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace,
+            quiet: true,
+            rerunManifestPath,
+            run: async (_configPath, args) => {
+                runs++
+
+                if (runs === 1) {
+                    await failTest(args, firstSpec, 'a fails')
+                    await failTest(args, secondSpec, 'b fails')
+                    return 1
+                }
+
+                // Each spec group is a separate rerun writing its own manifest.
+                await failTest(args, runs === 2 ? firstSpec : secondSpec, runs === 2 ? 'a fails' : 'b fails')
+                return 1
+            }
+        })
+
+        const recorded = await readFailedTests(rerunManifestPath)
+
+        expect(recorded.map((record) => record.fullTitle).sort()).toEqual(['a fails', 'b fails'])
+    })
+})
