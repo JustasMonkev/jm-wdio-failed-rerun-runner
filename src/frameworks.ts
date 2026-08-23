@@ -193,8 +193,15 @@ function getCucumberWorld(world: Frameworks.World): CucumberScenarioWorld | unde
     return result.success ? result.data : undefined
 }
 
+// Every property here is read off a framework-supplied object, and a partially
+// initialised or hostile runnable can expose an accessor that throws. Losing the
+// afterTest hook to that would lose the failure the rerun exists to fix.
 function readProperty(value: object, key: string) {
-    return (value as Record<string, unknown>)[key]
+    try {
+        return (value as Record<string, unknown>)[key]
+    } catch {
+        return undefined
+    }
 }
 
 function parseNonEmptyString(value: unknown) {

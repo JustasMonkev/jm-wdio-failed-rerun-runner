@@ -122,6 +122,31 @@ describe('against real Mocha objects', () => {
         expect(record.fullTitle).toBe('login flow logs in')
     })
 
+    it('keeps the failure record when a title accessor throws on read', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'failures.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+
+        // Distinct from a method that throws when called: this throws while the property
+        // is being READ, so a try around only the invocation does not catch it.
+        const hostile = {}
+        Object.defineProperty(hostile, 'fullTitle', {
+            enumerable: true,
+            get() {
+                throw new Error('runnable not attached')
+            }
+        })
+
+        await expect(service.afterTest(
+            { title: 'logs in', parent: 'login flow', file: 'specs/login.e2e.js' } as never,
+            { test: hostile },
+            { passed: false, duration: 1, retries: { attempts: 0, limit: 0 } } as never
+        )).resolves.toBeUndefined()
+
+        const [record] = await readFailedTests(manifestPath)
+        expect(record.fullTitle).toBe('login flow logs in')
+    })
+
     it('builds a filter that matches the real Mocha title and excludes its sibling', async () => {
         const workspace = await makeTempDir()
         const manifestPath = path.join(workspace, 'failures.ndjson')
