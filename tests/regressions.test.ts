@@ -139,6 +139,29 @@ describe('mocha full title reconstruction', () => {
 
         expect(record.fullTitle).toBe('login flow with valid credentials logs in')
     })
+
+    it('guards the final parent/title fallback against throwing accessors', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'failures.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+        const test = {
+            title: 'logs in',
+            file: 'specs/login.e2e.ts'
+        }
+        Object.defineProperty(test, 'parent', {
+            get() {
+                throw new Error('parent is unavailable')
+            }
+        })
+
+        await expect(service.afterTest(test as never, {}, {
+            passed: false,
+            duration: 1,
+            retries: { attempts: 0, limit: 0 }
+        } as never)).resolves.toBeUndefined()
+
+        expect((await readFailedTests(manifestPath))[0].fullTitle).toBe('logs in')
+    })
 })
 
 describe('focused rerun execution verification', () => {

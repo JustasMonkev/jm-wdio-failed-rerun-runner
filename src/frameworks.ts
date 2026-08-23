@@ -114,7 +114,7 @@ function passedOutcome(context: RecordContext) {
 }
 
 function getSpecFile(test: Frameworks.Test) {
-    return parseNonEmptyString(test.file)
+    return parseNonEmptyString(readProperty(test, 'file'))
 }
 
 // `@wdio/jasmine-framework` hands `afterTest` a spread of Jasmine's own spec result,
@@ -144,7 +144,9 @@ function getMochaFullTitle(test: Frameworks.Test, testContext?: unknown) {
         return fromContext
     }
 
-    return parseNonEmptyString([test.parent, test.title].filter(Boolean).join(' '))
+    const parent = parseNonEmptyString(readProperty(test, 'parent'))
+    const title = parseNonEmptyString(readProperty(test, 'title'))
+    return parseNonEmptyString([parent, title].filter(Boolean).join(' '))
 }
 
 // `fullTitle` must be invoked AS A METHOD of the runnable that owns it: Mocha's

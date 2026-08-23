@@ -1,4 +1,4 @@
-import { getExecutionKey } from '#src/manifest'
+import { matchExecutionRecords } from '#src/manifest'
 import type {
     FailedRerunAttemptResult,
     FailedRerunResult,
@@ -16,12 +16,6 @@ export const consoleLogger: FailedRerunLogger = {
     log: (message) => console.log(message)
 }
 
-// Scoped to the capability for the same reason the execution check is: a test that
-// recovered under one capability says nothing about another that never ran.
-export function getFailureKeyForSummary(record: FailedTestRecord) {
-    return getExecutionKey(record)
-}
-
 // A test that failed the initial run and passed a rerun is flaky; one that failed
 // every time is broken. Separating them is the whole point of running a rerun: a
 // build that is green only because of retries should still tell you what retried.
@@ -29,75 +23,75 @@ export function summarize(
     initialFailures: FailedTestRecord[],
     attempts: FailedRerunAttemptResult[]
 ): FailedRerunSummary {
-    // Rounds run in order, so the last attempt that targeted a test is the one that says
-    // how it ended. Accumulating instead would keep an early round's failure forever and
-    // report a test that later recovered as broken while the run exits 0.
-    const latest = new Map<string, 'failed' | 'passed' | 'noResult'>()
-    const noResultRecords = new Map<string, FailedTestRecord>()
-    const failedRecords = new Map<string, FailedTestRecord>()
+    // A token follows one execution through the rounds. Matching prefers the exact slot
+    // but can pair by fingerprint when a config reorder moves a capability. It is a
+    // one-to-one match, so colliding fingerprints still produce separate tokens.
+    const tokens: SummaryToken[] = initialFailures.map((record) => ({
+        initial: true,
+        record,
+        current: record,
+        state: 'pending'
+    }))
 
     for (const attempt of attempts) {
         if (attempt.type !== 'rerun') {
             continue
         }
 
-        const failed = new Set(attempt.failures.map(getFailureKeyForSummary))
-        const missing = new Set(attempt.notExecuted.map(getFailureKeyForSummary))
+        const active = tokens.filter((token) => token.state !== 'passed')
+        const targeted = matchExecutionRecords(active.map((token) => token.current), attempt.targeted)
+        const failed = matchExecutionRecords(attempt.targeted, attempt.failures)
+        const missing = matchExecutionRecords(attempt.targeted, attempt.notExecuted)
+        const failedByTarget = new Map(failed.pairs.map((pair) => [pair.expectedIndex, pair.actual]))
+        const missingTargets = new Set(missing.pairs.map((pair) => pair.expectedIndex))
 
-        for (const record of attempt.targeted) {
-            const key = getFailureKeyForSummary(record)
+        for (const pair of targeted.pairs) {
+            const token = active[pair.expectedIndex]
+            const targetIndex = pair.actualIndex
 
-            if (missing.has(key)) {
-                latest.set(key, 'noResult')
-                noResultRecords.set(key, record)
+            if (missingTargets.has(targetIndex)) {
+                token.current = pair.actual
+                token.state = 'noResult'
                 continue
             }
 
-            noResultRecords.delete(key)
-            latest.set(key, failed.has(key) ? 'failed' : 'passed')
+            const failure = failedByTarget.get(targetIndex)
+            if (failure) {
+                token.current = failure
+                token.state = 'failed'
+            } else {
+                token.state = 'passed'
+            }
         }
 
         // A rerun launches the spec under every configured capability, so it can surface
         // failures the initial run never reported. They keep the run red, so leaving them
         // out would make the summary contradict the exit code.
-        for (const record of attempt.failures) {
-            const key = getFailureKeyForSummary(record)
-            failedRecords.set(key, record)
-            latest.set(key, 'failed')
-        }
-    }
-
-    const flaky: FailedTestRecord[] = []
-    const broken: FailedTestRecord[] = []
-    const classified = new Set<string>()
-
-    for (const record of initialFailures) {
-        classified.add(getFailureKeyForSummary(record))
-        // A test no rerun ever targeted - `maxReruns: 0`, or a round that stopped early -
-        // recovered from nothing, so it is neither flaky nor proven broken.
-        switch (latest.get(getFailureKeyForSummary(record))) {
-            case 'passed':
-                flaky.push(record)
-                break
-            case 'failed':
-                broken.push(record)
-                break
-            default:
-                break
-        }
-    }
-
-    for (const [key, record] of failedRecords) {
-        if (!classified.has(key) && latest.get(key) === 'failed') {
-            broken.push(record)
+        for (const record of failed.unmatchedActual) {
+            tokens.push({
+                initial: false,
+                record,
+                current: record,
+                state: 'failed'
+            })
         }
     }
 
     return {
-        flaky,
-        broken,
-        notExecuted: Array.from(noResultRecords.values())
+        flaky: tokens.filter((token) => token.initial && token.state === 'passed')
+            .map((token) => token.record),
+        broken: tokens.filter((token) => token.state === 'failed')
+            .map((token) => token.record),
+        notExecuted: tokens.filter((token) => token.state === 'noResult')
+            .map((token) => token.current)
     }
+}
+
+interface SummaryToken {
+    initial: boolean
+    record: FailedTestRecord
+    current: FailedTestRecord
+    state: 'pending' | 'failed' | 'passed' | 'noResult'
 }
 
 export function reportInitialFailures(failures: FailedTestRecord[], logger: FailedRerunLogger) {

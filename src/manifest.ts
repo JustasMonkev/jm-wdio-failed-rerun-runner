@@ -111,14 +111,115 @@ export function dedupeFailedTests(records: FailedTestRecord[]) {
 // a rerun's records against the failures it targeted.
 //
 // A capability fingerprint stays attached to the browser when a config replaces or
-// reorders its capability array between attempts. Older records have no fingerprint, so
-// they fall back to WebdriverIO's cid. Its `<capabilityIndex>-<runCounter>` form requires
-// dropping the run counter: that part changes for every fresh worker and spec-file retry.
+// reorders its capability array between attempts. The slot supplements it here so equal
+// fingerprints remain distinct while deduplicating one manifest; cross-attempt matching
+// below can then pair them one-to-one. Older records have no fingerprint, so they fall
+// back to WebdriverIO's cid. Its `<capabilityIndex>-<runCounter>` form requires dropping
+// the run counter: that part changes for every fresh worker and spec-file retry.
 export function getExecutionKey(record: FailedTestRecord) {
+    const slot = getCapabilityId(record.cid)
     const capability = record.capabilityFingerprint
-        ? `fingerprint:${record.capabilityFingerprint}`
-        : `slot:${getCapabilityId(record.cid)}`
+        ? `fingerprint:${record.capabilityFingerprint}\0slot:${slot}`
+        : `slot:${slot}`
     return `${getFailureKey(record)}\0${capability}`
+}
+
+// Match evidence to the executions it can vouch for. The exact fingerprint+slot key is
+// tried first so one of two colliding capabilities cannot steal the other's evidence.
+// Any records left over may match by fingerprint alone: that is what lets a unique
+// capability follow a config reorder between attempts. Matching is one-to-one, so two
+// equal fingerprints still require two records before both executions are considered run.
+export function matchExecutionRecords(expected: FailedTestRecord[], actual: FailedTestRecord[]) {
+    const matchedActual = new Set<number>()
+    const actualByExactKey = indexRecords(actual, getExecutionKey)
+    const matches = new Map<number, number>()
+
+    for (const [expectedIndex, record] of expected.entries()) {
+        const actualIndex = takeUnmatched(actualByExactKey.get(getExecutionKey(record)), matchedActual)
+        if (actualIndex !== undefined) {
+            matches.set(expectedIndex, actualIndex)
+        }
+    }
+
+    const actualByFingerprint = indexRecords(actual, getFingerprintExecutionKey, matchedActual)
+    for (const [expectedIndex, record] of expected.entries()) {
+        if (matches.has(expectedIndex)) {
+            continue
+        }
+
+        const fingerprintKey = getFingerprintExecutionKey(record)
+        if (!fingerprintKey) {
+            continue
+        }
+
+        const actualIndex = takeUnmatched(actualByFingerprint.get(fingerprintKey), matchedActual)
+        if (actualIndex !== undefined) {
+            matches.set(expectedIndex, actualIndex)
+        }
+    }
+
+    return {
+        pairs: Array.from(matches.entries())
+            .sort(([left], [right]) => left - right)
+            .map(([expectedIndex, actualIndex]) => ({
+                expected: expected[expectedIndex],
+                expectedIndex,
+                actual: actual[actualIndex],
+                actualIndex
+            })),
+        unmatchedExpected: expected.filter((_record, index) => !matches.has(index)),
+        unmatchedActual: actual.filter((_record, index) => !matchedActual.has(index))
+    }
+}
+
+function indexRecords(
+    records: FailedTestRecord[],
+    getKey: (record: FailedTestRecord) => string | undefined,
+    excluded = new Set<number>()
+) {
+    const indexed = new Map<string, number[]>()
+
+    for (const [index, record] of records.entries()) {
+        if (excluded.has(index)) {
+            continue
+        }
+
+        const key = getKey(record)
+        if (!key) {
+            continue
+        }
+
+        const indices = indexed.get(key)
+        if (indices) {
+            indices.push(index)
+        } else {
+            indexed.set(key, [index])
+        }
+    }
+
+    return indexed
+}
+
+function takeUnmatched(indices: number[] | undefined, matched: Set<number>) {
+    if (!indices) {
+        return undefined
+    }
+
+    while (indices.length > 0) {
+        const index = indices.shift()!
+        if (!matched.has(index)) {
+            matched.add(index)
+            return index
+        }
+    }
+
+    return undefined
+}
+
+function getFingerprintExecutionKey(record: FailedTestRecord) {
+    return record.capabilityFingerprint
+        ? `${getFailureKey(record)}\0fingerprint:${record.capabilityFingerprint}`
+        : undefined
 }
 
 function getCapabilityId(cid: string | undefined) {

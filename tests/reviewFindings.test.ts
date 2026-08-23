@@ -440,6 +440,76 @@ describe('a rerun process failure is separate from its test outcomes', () => {
 })
 
 describe('execution evidence is scoped to the capability that produced it', () => {
+    it('keeps colliding capability fingerprints as distinct executions', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'login.e2e.ts')
+        const previous = process.env.WDIO_WORKER_ID
+        let runs = 0
+
+        const record = async (
+            args: FailedRerunRunArgs,
+            cid: string,
+            chromeArgs: string[],
+            fullTitle: string,
+            passed: boolean
+        ) => {
+            process.env.WDIO_WORKER_ID = cid
+            const service = new FailedTestRerunService(
+                getServiceOptions(args),
+                {
+                    browserName: 'chrome',
+                    'goog:chromeOptions': { args: chromeArgs }
+                } as WebdriverIO.Capabilities,
+                {} as WebdriverIO.Config
+            )
+            await service.afterTest({
+                title: fullTitle.split(' ').at(-1),
+                fullTitle,
+                file: spec
+            } as never, {}, {
+                passed,
+                duration: 1,
+                retries: { attempts: 0, limit: 0 }
+            } as never)
+        }
+
+        try {
+            const result = await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+                cwd: workspace,
+                quiet: true,
+                run: async (_configPath, args) => {
+                    runs++
+
+                    if (runs === 1) {
+                        // Both Chrome entries have the same selected browser identity, but
+                        // they are separate configured capabilities. The pass from slot 1
+                        // must not erase the failure from slot 0 before another failure
+                        // triggers the focused rerun.
+                        await record(args, '0-0', ['--headless'], 'login signs in', false)
+                        await record(args, '1-0', ['--incognito'], 'login signs in', true)
+                        await record(args, '1-0', ['--incognito'], 'login remembers user', false)
+                        return 1
+                    }
+
+                    // Only the tracked slot-1 failure runs. Slot 0's omitted failure must
+                    // keep the result red rather than being silently classified as flaky.
+                    await record(args, '1-0', ['--incognito'], 'login remembers user', true)
+                    return 0
+                }
+            })
+
+            expect(result.exitCode).toBe(1)
+            expect(result.summary.flaky.map((test) => test.fullTitle)).toEqual(['login remembers user'])
+            expect(result.summary.notExecuted.map((test) => test.fullTitle)).toEqual(['login signs in'])
+        } finally {
+            if (previous === undefined) {
+                delete process.env.WDIO_WORKER_ID
+            } else {
+                process.env.WDIO_WORKER_ID = previous
+            }
+        }
+    })
+
     it('does not let one capability\'s pass vouch for another that never ran', async () => {
         const workspace = await makeTempDir()
         const spec = path.join(workspace, 'login.e2e.ts')

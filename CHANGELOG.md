@@ -66,8 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it remains correct even when a config replaces or reorders capabilities between
   attempts, while rerun-specific build/session labels do not change the identity. The
   fingerprint is canonical across object key order and hashed so provider credentials are
-  not written to the manifest. Older records fall back to the stable slot portion of
-  WebdriverIO's `<capabilityIndex>-<runCounter>` worker id.
+  not written to the manifest. A stable slot discriminator keeps two configured
+  capabilities distinct when their fingerprints collide, and cross-attempt matching is
+  one-to-one so a single pass can never cover both while a reordered capability can still
+  be followed. Older records fall back to the stable slot portion of WebdriverIO's
+  `<capabilityIndex>-<runCounter>` worker id.
 - **A Proxy could still escape error serialization.** `instanceof Error` walks the
   prototype chain, so a Proxy that throws from `getPrototypeOf` failed before the guarded
   traversal began and took the failure record with it.
@@ -83,7 +86,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while the infrastructure failure still keeps the overall result red.
 - **A title accessor that threw on read still killed the hook.** Guarding only the
   invocation left the property read itself unprotected, so a partially initialised
-  runnable exposing `fullTitle` as a throwing getter lost the failure record.
+  runnable exposing `fullTitle`, `parent`, or `title` as a throwing getter lost the
+  failure record. Every title fallback now uses the same guarded accessor.
 - **One capability's pass erased another's failure.** The same spec and title run once
   per capability in separate workers, and manifest deduplication collapsed them on
   title alone, so a browser that passed could erase a browser that failed and the run

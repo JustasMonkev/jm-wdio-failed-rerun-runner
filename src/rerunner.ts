@@ -9,8 +9,8 @@ import {
     appendFailedTest,
     countUnreadableLines,
     dedupeFailedTests,
-    getExecutionKey,
     isUnresolvedFailure,
+    matchExecutionRecords,
     provesExecution,
     readFailedTests,
     readManifest,
@@ -535,8 +535,7 @@ async function readRerunRecords(settings: RerunSettings, manifestPath: string) {
 // from "everything passed". Treating that as success turns a red build green, so a test
 // the rerun never executed stays a failure.
 function findTestsThatDidNotRun(plan: RerunPlan, records: FailedTestRecord[]) {
-    const executed = new Set(records.filter(provesExecution).map(getExecutionKey))
-    return plan.tests.filter((test) => !executed.has(getExecutionKey(test)))
+    return matchExecutionRecords(plan.tests, records.filter(provesExecution)).unmatchedExpected
 }
 
 async function normalizeExitCode(exitCode: ReturnType<FailedRerunRun>) {
