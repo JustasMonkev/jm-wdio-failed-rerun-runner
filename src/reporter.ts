@@ -44,10 +44,12 @@ export function summarize(
         const missing = matchExecutionRecords(attempt.targeted, attempt.notExecuted)
         const failedByTarget = new Map(failed.pairs.map((pair) => [pair.expectedIndex, pair.actual]))
         const missingTargets = new Set(missing.pairs.map((pair) => pair.expectedIndex))
+        const targetedTokens = new Set<SummaryToken>()
 
         for (const pair of targeted.pairs) {
             const token = active[pair.expectedIndex]
             const targetIndex = pair.actualIndex
+            targetedTokens.add(token)
 
             if (missingTargets.has(targetIndex)) {
                 token.current = pair.actual
@@ -65,9 +67,23 @@ export function summarize(
         }
 
         // A rerun launches the spec under every configured capability, so it can surface
-        // failures the initial run never reported. They keep the run red, so leaving them
-        // out would make the summary contradict the exit code.
-        for (const record of failed.unmatchedActual) {
+        // both entirely new failures and regressions from capabilities that passed an
+        // earlier round. Reconcile the latter with their existing tokens first so one
+        // execution cannot appear in both flaky and broken.
+        const untargetedTokens = tokens.filter((token) => !targetedTokens.has(token))
+        const reopened = matchExecutionRecords(
+            untargetedTokens.map((token) => token.current),
+            failed.unmatchedActual
+        )
+        for (const pair of reopened.pairs) {
+            const token = untargetedTokens[pair.expectedIndex]
+            token.current = pair.actual
+            token.state = 'failed'
+        }
+
+        // Failures with no prior token were first seen during this rerun. They keep the
+        // run red, so leaving them out would make the summary contradict the exit code.
+        for (const record of reopened.unmatchedActual) {
             tokens.push({
                 initial: false,
                 record,

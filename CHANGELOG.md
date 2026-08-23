@@ -84,6 +84,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nonzero; the summary discarded the pass and called the test unexecuted. Test outcomes
   are now classified from their execution records independently of the process exit code,
   while the infrastructure failure still keeps the overall result red.
+- **A capability could be reported as both flaky and broken.** When one capability passed
+  a focused round while another kept the spec queued, every capability ran the spec again
+  in the next round. A later regression was treated as a new failure instead of reopening
+  the capability's passed outcome. Later failures are now reconciled with existing tokens
+  before they are classified as newly surfaced failures.
 - **A title accessor that threw on read still killed the hook.** Guarding only the
   invocation left the property read itself unprotected, so a partially initialised
   runnable exposing `fullTitle`, `parent`, or `title` as a throwing getter lost the

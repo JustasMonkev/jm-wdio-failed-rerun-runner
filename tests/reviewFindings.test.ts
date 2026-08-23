@@ -440,6 +440,73 @@ describe('a rerun process failure is separate from its test outcomes', () => {
 })
 
 describe('execution evidence is scoped to the capability that produced it', () => {
+    it('reopens a capability that fails after passing an earlier rerun round', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'login.e2e.ts')
+        const previous = process.env.WDIO_WORKER_ID
+        let runs = 0
+
+        const record = async (
+            args: FailedRerunRunArgs,
+            cid: string,
+            browserName: string,
+            passed: boolean
+        ) => {
+            process.env.WDIO_WORKER_ID = cid
+            const service = new FailedTestRerunService(
+                getServiceOptions(args),
+                { browserName },
+                {} as WebdriverIO.Config
+            )
+            await service.afterTest({
+                title: 'signs in',
+                fullTitle: 'login signs in',
+                file: spec
+            } as never, {}, {
+                passed,
+                duration: 1,
+                retries: { attempts: 0, limit: 0 }
+            } as never)
+        }
+
+        try {
+            const result = await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+                cwd: workspace,
+                quiet: true,
+                maxReruns: 2,
+                run: async (_configPath, args) => {
+                    runs++
+
+                    if (runs === 1) {
+                        await record(args, '0-0', 'firefox', false)
+                        await record(args, '1-0', 'chrome', false)
+                    } else if (runs === 2) {
+                        // Firefox recovers, but Chrome keeps the spec queued.
+                        await record(args, '0-0', 'firefox', true)
+                        await record(args, '1-0', 'chrome', false)
+                    } else {
+                        // The next focused launch runs the spec under every configured
+                        // capability again. Firefox regresses while Chrome recovers.
+                        await record(args, '0-0', 'firefox', false)
+                        await record(args, '1-0', 'chrome', true)
+                    }
+
+                    return 1
+                }
+            })
+
+            expect(result.exitCode).toBe(1)
+            expect(result.summary.flaky.map((test) => test.cid)).toEqual(['1-0'])
+            expect(result.summary.broken.map((test) => test.cid)).toEqual(['0-0'])
+        } finally {
+            if (previous === undefined) {
+                delete process.env.WDIO_WORKER_ID
+            } else {
+                process.env.WDIO_WORKER_ID = previous
+            }
+        }
+    })
+
     it('keeps colliding capability fingerprints as distinct executions', async () => {
         const workspace = await makeTempDir()
         const spec = path.join(workspace, 'login.e2e.ts')
