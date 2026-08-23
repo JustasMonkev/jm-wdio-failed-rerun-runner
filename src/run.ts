@@ -53,7 +53,7 @@ const parsedCliArgsSchema = z.object({
 type ParsedCliArgs = z.output<typeof parsedCliArgsSchema>
 type ParsedCliArgsInput = z.input<typeof parsedCliArgsSchema>
 
-// WebdriverIO's launcher registers an `exit-hook` handler, and exit-hook@4 replaces the
+// WebdriverIO's launcher registers an `async-exit-hook` handler, which replaces the
 // process exit path in a way that discards `process.exitCode`: a process that only sets it
 // still exits 0, so every failing run would report success. Exiting explicitly is the only
 // reliable way to signal failure, but `process.exit` truncates pending asynchronous writes

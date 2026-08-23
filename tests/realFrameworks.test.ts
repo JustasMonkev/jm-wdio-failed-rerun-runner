@@ -194,8 +194,20 @@ describe('stream draining', () => {
 describe('exit code survives WebdriverIO exit hooks', () => {
     const fixtures = fileURLToPath(new URL('./fixtures/', import.meta.url))
 
-    it('exit-hook still discards process.exitCode, which is why exitWith exists', async () => {
-        // Guards the premise. WebdriverIO's launcher registers exit-hook unconditionally,
+    it('is still built on async-exit-hook, the package the premise is about', async () => {
+        // The guard below is only meaningful against the hook package WebdriverIO actually
+        // loads. If @wdio/cli ever switches to another one, that guard would keep passing
+        // while watching something irrelevant, so pin the dependency it is asserting about.
+        const wdioCli = JSON.parse(await fs.readFile(
+            fileURLToPath(new URL('../node_modules/@wdio/cli/package.json', import.meta.url)),
+            'utf8'
+        )) as { dependencies?: Record<string, string> }
+
+        expect(wdioCli.dependencies ?? {}).toHaveProperty('async-exit-hook')
+    })
+
+    it('async-exit-hook still discards process.exitCode, which is why exitWith exists', async () => {
+        // Guards the premise. WebdriverIO's launcher registers the hook unconditionally,
         // and this version replaces the exit path so that setting process.exitCode alone
         // exits 0. If a future version fixes this, the assertion tells us the workaround
         // can be reconsidered rather than silently becoming dead weight.

@@ -73,7 +73,6 @@
         "@wdio/cli": "^9.31.2",
         "@wdio/types": "^9.31.2",
         "eslint": "^10.9.0",
-        "exit-hook": "^4.0.0",
         "jiti": "^2.7.0",
         "mocha": "^11.8.0",
         "typescript": "^6.0.3",
