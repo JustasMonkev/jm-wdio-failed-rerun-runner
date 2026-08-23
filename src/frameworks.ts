@@ -40,7 +40,11 @@ const cucumberScenarioWorldSchema: z.ZodType<CucumberScenarioWorld> = z.object({
         uri: z.string().optional()
     }).optional(),
     uri: z.string().optional()
-}).passthrough()
+})
+// Deliberately not `.passthrough()`: nothing here reads beyond the declared keys, and
+// passing unknown ones through means enumerating every own key of a framework-supplied
+// object. An accessor throwing on a key this code never wanted would otherwise cost the
+// failure record.
 
 export function createMochaFailedTestRecord(
     test: Frameworks.Test,
@@ -193,14 +197,21 @@ function getCucumberSpecFile(world: Frameworks.World) {
 }
 
 function getCucumberWorld(world: Frameworks.World): CucumberScenarioWorld | undefined {
-    const result = cucumberScenarioWorldSchema.safeParse(world)
-    return result.success ? result.data : undefined
+    try {
+        // `safeParse` is only safe about the shape it finds, not about reading it: the
+        // passthrough enumerates every own key, so an accessor that throws anywhere on the
+        // world - `result` included - escapes as an exception and costs the failure record.
+        const result = cucumberScenarioWorldSchema.safeParse(world)
+        return result.success ? result.data : undefined
+    } catch {
+        return undefined
+    }
 }
 
 // Every property here is read off a framework-supplied object, and a partially
 // initialised or hostile runnable can expose an accessor that throws. Losing the
 // afterTest hook to that would lose the failure the rerun exists to fix.
-function readProperty(value: object, key: string) {
+export function readProperty(value: object, key: string) {
     try {
         return (value as Record<string, unknown>)[key]
     } catch {

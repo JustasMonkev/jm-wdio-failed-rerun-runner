@@ -4,7 +4,8 @@ import { appendFailedTest } from '#src/manifest'
 import { failedRerunServiceOptionsSchema } from '#src/schemas'
 import {
     createCucumberFailedScenarioRecord,
-    createMochaFailedTestRecord
+    createMochaFailedTestRecord,
+    readProperty
 } from '#src/frameworks'
 import type { FailedRerunServiceOptions, FailedTestRecord } from '#src/types'
 
@@ -90,13 +91,14 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
 // a skip, which can miss. Mocha and Jasmine also mark the test itself as pending, and that
 // flag comes from the framework rather than from a message match, so consult both.
 function isSkipped(test: Frameworks.Test, result: Frameworks.TestResult) {
-    const { pending } = test as { pending?: boolean }
-    return Boolean(pending) || Boolean((result as { skipped?: boolean }).skipped)
+    return Boolean(readProperty(test, 'pending')) || Boolean(readProperty(result, 'skipped'))
 }
 
 function isSkippedScenario(world: Frameworks.World) {
-    const { result } = world as { result?: { status?: string } }
-    return result?.status?.toUpperCase() === 'SKIPPED'
+    const status = readNestedProperty(world, 'result', 'status')
+    // Checking the type rather than calling defensively: a status that is not a string
+    // cannot be the marker, and this way a hostile `toUpperCase` is never reached.
+    return typeof status === 'string' && status.toUpperCase() === 'SKIPPED'
 }
 
 // Only the final in-run attempt should decide whether a test lands in the manifest.
@@ -106,22 +108,30 @@ function isSkippedScenario(world: Frameworks.World) {
 // hook runs `attempts` already equals `limit`. Mocha's own retry counters do survive on
 // the test object as plain properties, and they are the reliable signal.
 function willBeRetriedByWdio(test: Frameworks.Test, result: Frameworks.TestResult) {
-    const { _currentRetry: currentRetry, _retries: retries } = test as {
-        _currentRetry?: number
-        _retries?: number
-    }
+    const currentRetry = readProperty(test, '_currentRetry')
+    const retries = readProperty(test, '_retries')
 
     if (typeof currentRetry === 'number' && typeof retries === 'number' && currentRetry < retries) {
         return true
     }
 
-    return Boolean(result.retries && result.retries.attempts < result.retries.limit)
+    const attempts = readNestedProperty(result, 'retries', 'attempts')
+    const limit = readNestedProperty(result, 'retries', 'limit')
+    return typeof attempts === 'number' && typeof limit === 'number' && attempts < limit
 }
 
 // cucumber-js sets `willBeRetried` on the hook parameter itself; @wdio/types declares it
 // nested under `result`, which is why reading only `result.willBeRetried` silently never
 // matched. Accept both.
 function willBeRetriedByWdioScenario(world: Frameworks.World) {
-    const { willBeRetried } = world as { willBeRetried?: boolean }
-    return Boolean(willBeRetried ?? world.result?.willBeRetried)
+    const willBeRetried = readProperty(world, 'willBeRetried')
+    return Boolean(willBeRetried ?? readNestedProperty(world, 'result', 'willBeRetried'))
+}
+
+// The nested reads have the same hazard as the shallow ones: `world.result` and
+// `result.retries` are framework-supplied objects too, and an accessor throwing anywhere
+// along the way would cost the failure record the rerun exists to fix.
+function readNestedProperty(value: object, key: string, nestedKey: string) {
+    const nested = readProperty(value, key)
+    return nested && typeof nested === 'object' ? readProperty(nested, nestedKey) : undefined
 }

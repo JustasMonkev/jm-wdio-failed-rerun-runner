@@ -1127,3 +1127,126 @@ describe('a skipped test retires an earlier failure without proving execution', 
         expect(rerun.summary.notExecuted.map((record) => record.fullTitle)).toEqual(['signs in'])
     })
 })
+
+describe('a hostile framework object cannot cost the failure record', () => {
+    // Every one of these is read off an object a framework hands the hook. A partially
+    // initialised or hostile one can expose an accessor that throws, and an exception here
+    // rejects the hook and loses the very failure the rerun exists to fix.
+    function withThrowingGetter<T extends object>(target: T, key: string) {
+        Object.defineProperty(target, key, {
+            configurable: true,
+            get() {
+                throw new Error(`cannot read ${key}`)
+            }
+        })
+        return target
+    }
+
+    const test = () => ({ title: 'signs in', fullTitle: 'login signs in', file: 'specs/login.e2e.ts' })
+    const result = () => ({ passed: false, duration: 1, retries: { attempts: 0, limit: 0 } })
+
+    it.each(['pending', '_currentRetry', '_retries'])(
+        'still records the failure when test.%s throws on read',
+        async (key) => {
+            const manifestPath = path.join(await makeTempDir(), 'manifest.ndjson')
+            const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+
+            await service.afterTest(withThrowingGetter(test(), key) as never, {}, result() as never)
+
+            expect((await readFailedTests(manifestPath)).map((record) => record.fullTitle))
+                .toEqual(['login signs in'])
+        }
+    )
+
+    it('still records the failure when result.skipped throws on read', async () => {
+        const manifestPath = path.join(await makeTempDir(), 'manifest.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+
+        await service.afterTest(test() as never, {}, withThrowingGetter(result(), 'skipped') as never)
+
+        expect((await readFailedTests(manifestPath)).map((record) => record.fullTitle))
+            .toEqual(['login signs in'])
+    })
+
+    it.each([
+        ['result.retries', () => withThrowingGetter({ passed: false, duration: 1 }, 'retries')],
+        ['result.retries.attempts', () => {
+            const value = { passed: false, duration: 1, retries: { limit: 0 } }
+            withThrowingGetter(value.retries, 'attempts')
+            return value
+        }]
+    ])('still records the failure when %s throws on read', async (_label, build) => {
+        const manifestPath = path.join(await makeTempDir(), 'manifest.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+
+        await service.afterTest(test() as never, {}, build() as never)
+
+        expect((await readFailedTests(manifestPath)).map((record) => record.fullTitle))
+            .toEqual(['login signs in'])
+    })
+
+    const world = () => ({
+        pickle: { name: 'signs in', uri: 'features/login.feature' },
+        result: { status: 'FAILED' }
+    })
+    const pickleResult = () => ({ passed: false, duration: 1, error: 'nope' })
+
+    it.each([
+        ['world.result', () => withThrowingGetter(world(), 'result')],
+        ['world.willBeRetried', () => withThrowingGetter(world(), 'willBeRetried')],
+        ['world.result.status', () => {
+            const value = world()
+            withThrowingGetter(value.result, 'status')
+            return value
+        }],
+        // A status that is not a string cannot be the skip marker, so a hostile
+        // `toUpperCase` should never be reached in the first place.
+        ['status.toUpperCase', () => ({
+            ...world(),
+            result: { status: { toUpperCase() { throw new Error('cannot upper') } } }
+        })]
+    ])('still records the scenario failure when %s throws on read', async (_label, build) => {
+        const manifestPath = path.join(await makeTempDir(), 'manifest.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+
+        await service.afterScenario(build() as never, pickleResult() as never, {})
+
+        expect((await readFailedTests(manifestPath)).map((record) => record.fullTitle))
+            .toEqual(['signs in'])
+    })
+})
+
+describe('an unreadable scenario name costs one record, not the run', () => {
+    it('resolves rather than rejecting when the pickle itself cannot be read', async () => {
+        // Unlike the cases above this one is genuinely unrecoverable: the scenario name
+        // exists only on the pickle, so no record can be built. What must not happen is the
+        // hook rejecting - that aborts the worker and takes every later failure with it.
+        const manifestPath = path.join(await makeTempDir(), 'manifest.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+        const hostile = { result: { status: 'FAILED' } }
+        Object.defineProperty(hostile, 'pickle', {
+            configurable: true,
+            get() {
+                throw new Error('cannot read pickle')
+            }
+        })
+
+        await expect(service.afterScenario(
+            hostile as never,
+            { passed: false, duration: 1, error: 'nope' } as never,
+            {}
+        )).resolves.toBeUndefined()
+
+        expect(await readFailedTests(manifestPath)).toEqual([])
+
+        // The very next scenario, with a readable pickle, is still recorded.
+        await service.afterScenario(
+            { pickle: { name: 'signs out', uri: 'features/login.feature' }, result: { status: 'FAILED' } } as never,
+            { passed: false, duration: 1, error: 'nope' } as never,
+            {}
+        )
+
+        expect((await readFailedTests(manifestPath)).map((record) => record.fullTitle))
+            .toEqual(['signs out'])
+    })
+})
