@@ -104,8 +104,10 @@ Important options:
 - `args`: WDIO launcher args to pass into every run.
 - `maxReruns`: maximum focused rerun rounds. Defaults to `1`.
 - `passOnSuccessfulRerun`: return `0` when focused reruns pass. Defaults to `true`.
-- `manifestPath`: manifest path for the initial run. Defaults to a temp file.
-- `rerunManifestPath`: manifest path for rerun rounds. Defaults to temp files.
+- `manifestPath`: manifest path for the initial run. Defaults to a temp file, which is
+  removed when the run ends; a path you supply is kept as your artifact.
+- `rerunManifestPath`: manifest path for rerun rounds. Defaults to temp files, removed the
+  same way.
 - `run`: injectable runner function for tests or custom launchers.
 
 The result includes the final `exitCode`, all run `attempts`, unresolved `failures`, and a

@@ -742,3 +742,136 @@ describe('serialization survives a revoked proxy', () => {
         expect(await readFailedTests(manifestPath)).toHaveLength(1)
     })
 })
+
+describe('internally generated manifests do not accumulate', () => {
+    it('removes the temp manifests it invented, even on a fully green run', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'a.e2e.ts')
+        const seen: string[] = []
+
+        await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace,
+            quiet: true,
+            run: async (_configPath, args) => {
+                const options = getServiceOptions(args)
+                seen.push(options.manifestPath)
+
+                const service = new FailedTestRerunService(options, {}, {} as WebdriverIO.Config)
+                await service.afterTest({
+                    title: 't',
+                    fullTitle: 'suite t',
+                    file: spec
+                } as never, {}, {
+                    passed: true,
+                    duration: 1,
+                    retries: { attempts: 0, limit: 0 }
+                } as never)
+                return 0
+            }
+        })
+
+        // Every completed test is recorded now, so leaving these behind would drop a
+        // full-suite NDJSON file into the temp directory on every run.
+        expect(seen).not.toHaveLength(0)
+        for (const manifestPath of seen) {
+            await expect(fs.access(manifestPath)).rejects.toThrow()
+        }
+    })
+
+    it('leaves a manifest the caller named alone', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'a.e2e.ts')
+        const manifestPath = path.join(workspace, 'initial-failures.ndjson')
+
+        await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace,
+            quiet: true,
+            maxReruns: 0,
+            manifestPath,
+            run: async (_configPath, args) => {
+                const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
+                await service.afterTest({
+                    title: 't',
+                    fullTitle: 'suite t',
+                    file: spec
+                } as never, {}, {
+                    passed: false,
+                    duration: 1,
+                    retries: { attempts: 0, limit: 0 }
+                } as never)
+                return 1
+            }
+        })
+
+        // A path the caller supplied is their build artifact.
+        expect((await readFailedTests(manifestPath)).map((record) => record.fullTitle)).toEqual(['suite t'])
+    })
+
+    it('removes the temp manifests each rerun round invents', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'a.e2e.ts')
+        const seen: string[] = []
+        let runs = 0
+
+        await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace,
+            quiet: true,
+            run: async (_configPath, args) => {
+                runs++
+                const options = getServiceOptions(args)
+                seen.push(options.manifestPath)
+
+                const service = new FailedTestRerunService(options, {}, {} as WebdriverIO.Config)
+                await service.afterTest({
+                    title: 't',
+                    fullTitle: 'suite t',
+                    file: spec
+                } as never, {}, {
+                    passed: runs > 1,
+                    duration: 1,
+                    retries: { attempts: 0, limit: 0 }
+                } as never)
+                return runs > 1 ? 0 : 1
+            }
+        })
+
+        // Each rerun round resolves its own temp path, so those need collecting too.
+        expect(seen).toHaveLength(2)
+        for (const manifestPath of seen) {
+            await expect(fs.access(manifestPath)).rejects.toThrow()
+        }
+    })
+
+    it('still cleans up when the run throws after writing', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'a.e2e.ts')
+        const seen: string[] = []
+
+        await expect(runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace,
+            quiet: true,
+            run: async (_configPath, args) => {
+                const options = getServiceOptions(args)
+                seen.push(options.manifestPath)
+
+                // Write first: a manifest that was never written to would be absent
+                // whether or not cleanup ran, so the assertion below could not tell.
+                const service = new FailedTestRerunService(options, {}, {} as WebdriverIO.Config)
+                await service.afterTest({
+                    title: 't',
+                    fullTitle: 'suite t',
+                    file: spec
+                } as never, {}, {
+                    passed: false,
+                    duration: 1,
+                    retries: { attempts: 0, limit: 0 }
+                } as never)
+
+                throw new Error('launcher exploded')
+            }
+        })).rejects.toThrow('launcher exploded')
+
+        expect(seen).toHaveLength(1)
+        await expect(fs.access(seen[0])).rejects.toThrow()
+    })
+})

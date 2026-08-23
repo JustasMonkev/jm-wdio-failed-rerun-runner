@@ -45,6 +45,10 @@ interface RerunSettings {
     args: FailedRerunRunArgs
     // Accumulates manifest lines that could not be read, across every attempt.
     unreadable: { lines: number }
+    // Manifests this run invented a temp path for. A path the caller supplied is their
+    // artifact and is left alone; these are internal scratch and must not pile up in the
+    // temp directory, since a green run now records every passing test.
+    generatedManifests: string[]
     logger: FailedRerunLogger
     browserstackEnv: FailedRerunBrowserStackEnv
     cwd: string
@@ -112,6 +116,29 @@ async function runFailedTestsRerunWithDeps(
     deps: FailedTestsRerunnerDeps
 ): Promise<FailedRerunResult> {
     const settings = createRerunSettings(options, deps)
+
+    if (!options.manifestPath) {
+        settings.generatedManifests.push(settings.manifestPath)
+    }
+
+    try {
+        return await runWithSettings(configPath, settings)
+    } finally {
+        await removeGeneratedManifests(settings)
+    }
+}
+
+// Deleting through the store keeps a substituted adapter in charge of its own storage.
+async function removeGeneratedManifests(settings: RerunSettings) {
+    for (const manifestPath of settings.generatedManifests) {
+        await settings.manifests.reset(manifestPath).catch(() => {})
+    }
+}
+
+async function runWithSettings(
+    configPath: string,
+    settings: RerunSettings
+): Promise<FailedRerunResult> {
     const initialAttempt = await runInitialAttempt(configPath, settings)
     const attempts: FailedRerunAttemptResult[] = [initialAttempt]
 
@@ -154,6 +181,7 @@ function createRerunSettings(
     return {
         args: options.args || {},
         unreadable: { lines: 0 },
+        generatedManifests: [],
         browserstackEnv: deps.browserstackEnv || processBrowserStackEnv,
         cwd,
         manifestPath: resolveManifestPath(options.manifestPath, cwd, 'initial'),
@@ -272,6 +300,9 @@ async function runRerunPlan(
     plan: RerunPlan
 ): Promise<FailedRerunAttemptResult> {
     const manifestPath = resolveManifestPath(settings.rerunManifestPath, settings.cwd, `rerun-${round}-${index}`)
+    if (!settings.rerunManifestPath) {
+        settings.generatedManifests.push(manifestPath)
+    }
     await settings.manifests.reset(manifestPath)
 
     const exitCode = await settings.retryEnv.withRetry(

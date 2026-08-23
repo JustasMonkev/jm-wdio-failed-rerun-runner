@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     indistinguishable from "everything passed", so a filter matching zero tests
     produced exit code `0`. Reruns now record executed tests, and a targeted test
     that never ran is a hard failure reported in `notExecuted`.
+- **Internally generated manifests were never cleaned up.** With no `manifestPath` given,
+  each run invents temp files and left them behind; now that every completed test is
+  recorded, a green run of a large suite dropped a full-suite NDJSON file into the temp
+  directory every time. Manifests the runner invented are removed when the run ends,
+  including when it throws. A path the caller supplied is their artifact and is untouched.
 - **A spec-file retry that recovered during the initial run was still rerun.** Passed
   tests were only recorded during focused reruns, so a `specFileRetries` attempt that
   succeeded wrote nothing and left the earlier worker's failure standing. Every completed
