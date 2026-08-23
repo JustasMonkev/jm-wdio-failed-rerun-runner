@@ -184,3 +184,97 @@ describe('focused rerun execution verification', () => {
         expect(rerun.type === 'rerun' && rerun.notExecuted).toEqual([])
     })
 })
+
+describe('tests that must not be queued for rerun', () => {
+    it('does not record a skipped test as a failure', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'failures.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+
+        // WebdriverIO reports a skipped test as `passed: false, skipped: true`. Recording
+        // it would queue a test that can never pass, so the run could never go green.
+        await service.afterTest({
+            title: 'is skipped',
+            fullTitle: 'suite is skipped',
+            file: 'specs/a.e2e.ts'
+        } as never, {}, {
+            passed: false,
+            skipped: true,
+            duration: 1,
+            retries: { attempts: 0, limit: 0 }
+        } as never)
+
+        expect(await readFailedTests(manifestPath)).toEqual([])
+    })
+
+    it('waits for the final Mocha retry before recording a failure', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'failures.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+        const failing = {
+            passed: false,
+            duration: 1,
+            // @wdio/utils exhausts its own budget before returning, so these are equal by
+            // the time the hook runs and cannot indicate a pending retry.
+            retries: { attempts: 2, limit: 2 }
+        } as never
+
+        // Mocha will retry: attempt 0 of 2.
+        await service.afterTest({
+            title: 'flakes',
+            fullTitle: 'suite flakes',
+            file: 'specs/a.e2e.ts',
+            _currentRetry: 0,
+            _retries: 2
+        } as never, {}, failing)
+
+        expect(await readFailedTests(manifestPath)).toEqual([])
+
+        // Final attempt: Mocha has no retries left.
+        await service.afterTest({
+            title: 'flakes',
+            fullTitle: 'suite flakes',
+            file: 'specs/a.e2e.ts',
+            _currentRetry: 2,
+            _retries: 2
+        } as never, {}, failing)
+
+        expect((await readFailedTests(manifestPath)).map((record) => record.fullTitle))
+            .toEqual(['suite flakes'])
+    })
+
+    it('does not record a Cucumber scenario that will be retried', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'failures.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+
+        // cucumber-js sets `willBeRetried` on the hook parameter itself, not under `result`.
+        await service.afterScenario({
+            pickle: { name: 'signs in', uri: 'features/login.feature' },
+            willBeRetried: true
+        } as never, { passed: false, duration: 1 } as never, {})
+
+        expect(await readFailedTests(manifestPath)).toEqual([])
+    })
+
+    it('lets a later passed record supersede an earlier failure for the same test', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'failures.ndjson')
+
+        await appendFailedTest(manifestPath, {
+            attempt: 'rerun',
+            framework: 'mocha',
+            spec: 'specs/a.e2e.ts',
+            fullTitle: 'suite flakes'
+        })
+        await appendFailedTest(manifestPath, {
+            attempt: 'rerun',
+            framework: 'mocha',
+            spec: 'specs/a.e2e.ts',
+            fullTitle: 'suite flakes',
+            outcome: 'passed'
+        })
+
+        expect(await readFailedTests(manifestPath)).toEqual([])
+    })
+})

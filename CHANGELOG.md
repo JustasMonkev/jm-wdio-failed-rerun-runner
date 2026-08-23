@@ -24,6 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     indistinguishable from "everything passed", so a filter matching zero tests
     produced exit code `0`. Reruns now record executed tests, and a targeted test
     that never ran is a hard failure reported in `notExecuted`.
+- **A skipped test was recorded as a failure.** WebdriverIO reports `this.skip()` as
+  `passed: false, skipped: true`, so a skipped test was queued for rerun, skipped
+  again, and never resolved, forcing a non-zero exit once reruns were exhausted.
+- **In-run retries were not detected**, so every intermediate attempt of a
+  `mochaOpts.retries` test was recorded. `result.retries.attempts < limit` can never
+  be true in `afterTest`: WebdriverIO exhausts its retry budget before returning.
+  Mocha's own `_currentRetry`/`_retries` are now consulted.
+- **Cucumber retries were never detected**: cucumber-js sets `willBeRetried` on the
+  hook parameter, not under `result` where `@wdio/types` declares it.
+- Manifest dedupe kept the first record for a test, so a later `passed` entry could
+  not supersede an earlier failure from an in-run retry. The last record now wins.
+- `npm run typecheck` failed on a clean checkout, and the CI workflow ran it before
+  building; `#src/*` resolves to `build/*.d.ts`, so a `pretypecheck` build was needed.
 - `serializeError` reported a shared non-cyclic object as `[Circular]` the second
   time it appeared, discarding real diagnostic data.
 - A single malformed manifest line aborted the entire rerun; unreadable lines are

@@ -50,6 +50,7 @@
     "prepack": "npm run build",
     "test": "npm run build && vitest run tests",
     "coverage": "npm run build && vitest run tests --coverage",
+    "pretypecheck": "npm run build",
     "typecheck": "tsc -p tsconfig.test.json --noEmit"
   },
   "files": [

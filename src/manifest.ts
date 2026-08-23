@@ -59,20 +59,17 @@ function parseManifestLine(line: string) {
     }
 }
 
+// Last record wins: a test retried in-run can be written more than once, and the final
+// entry is the one that reflects how it actually ended. Insertion order is preserved so
+// the manifest still reads chronologically.
 export function dedupeFailedTests(records: FailedTestRecord[]) {
-    const seen = new Set<string>()
-    const deduped: FailedTestRecord[] = []
+    const byKey = new Map<string, FailedTestRecord>()
 
     for (const record of records) {
-        const key = getFailureKey(record)
-        if (seen.has(key)) {
-            continue
-        }
-        seen.add(key)
-        deduped.push(record)
+        byKey.set(getFailureKey(record), record)
     }
 
-    return deduped
+    return Array.from(byKey.values())
 }
 
 export function getFailureKey(record: FailedTestRecord) {

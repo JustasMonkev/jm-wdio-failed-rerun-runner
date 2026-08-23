@@ -249,6 +249,7 @@ async function runRerunPlan(
     const rerunAttempt = {
         exitCode: notExecuted.length > 0 ? exitCode || 1 : exitCode,
         failures,
+        targeted: plan.tests,
         notExecuted,
         spec: plan.spec,
         specs: plan.specs,

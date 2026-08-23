@@ -137,6 +137,8 @@ export interface FailedRerunMochaRerunAttemptResult extends FailedRerunAttemptRe
     framework: 'mocha'
     spec: string
     specs: string[]
+    // Tests this rerun set out to run.
+    targeted: FailedTestRecord[]
     // Targeted tests the rerun never executed, i.e. tests the filter failed to match.
     notExecuted: FailedTestRecord[]
     grep: string
@@ -147,6 +149,7 @@ export interface FailedRerunJasmineRerunAttemptResult extends FailedRerunAttempt
     framework: 'jasmine'
     spec: string
     specs: string[]
+    targeted: FailedTestRecord[]
     notExecuted: FailedTestRecord[]
     grep: string
 }
@@ -156,6 +159,7 @@ export interface FailedRerunCucumberRerunAttemptResult extends FailedRerunAttemp
     framework: 'cucumber'
     spec: string
     specs: string[]
+    targeted: FailedTestRecord[]
     notExecuted: FailedTestRecord[]
     name: string[]
 }

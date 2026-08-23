@@ -28,10 +28,15 @@ export function summarize(
 ): FailedRerunSummary {
     const unresolved = new Map<string, FailedTestRecord>()
     const notExecuted = new Map<string, FailedTestRecord>()
+    const targeted = new Set<string>()
 
     for (const attempt of attempts) {
         if (attempt.type !== 'rerun') {
             continue
+        }
+
+        for (const record of attempt.targeted) {
+            targeted.add(getFailureKeyForSummary(record))
         }
 
         for (const record of attempt.failures) {
@@ -49,6 +54,12 @@ export function summarize(
     for (const record of initialFailures) {
         const key = getFailureKeyForSummary(record)
         if (notExecuted.has(key)) {
+            continue
+        }
+
+        // A test no rerun ever targeted - `maxReruns: 0`, or a round that stopped early -
+        // recovered from nothing, so it is neither flaky nor proven broken.
+        if (!targeted.has(key)) {
             continue
         }
 

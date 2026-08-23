@@ -29,7 +29,15 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
     }
 
     async afterTest(test: Frameworks.Test, context: unknown, result: Frameworks.TestResult) {
-        if (willBeRetriedByWdio(result)) {
+        if (willBeRetriedByWdio(test, result)) {
+            return
+        }
+
+        // A skipped test reaches this hook as `passed: false` with `skipped: true`.
+        // Recording it would queue a test that can never pass, so the rerun could never
+        // resolve it and the run could never go green. It is also not evidence that a
+        // targeted test executed, so skip it on reruns too.
+        if (isSkipped(result)) {
             return
         }
 
@@ -93,12 +101,33 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
     }
 }
 
-// WDIO retries the test in-run when `retries` is configured; only the final
-// attempt should decide whether the test lands in the rerun manifest.
-function willBeRetriedByWdio(result: Frameworks.TestResult) {
+function isSkipped(result: Frameworks.TestResult) {
+    return Boolean((result as { skipped?: boolean }).skipped)
+}
+
+// Only the final in-run attempt should decide whether a test lands in the manifest.
+//
+// `result.retries` cannot answer this on its own: @wdio/utils recurses inside
+// `executeAsync` until the budget is spent before it ever returns, so by the time this
+// hook runs `attempts` already equals `limit`. Mocha's own retry counters do survive on
+// the test object as plain properties, and they are the reliable signal.
+function willBeRetriedByWdio(test: Frameworks.Test, result: Frameworks.TestResult) {
+    const { _currentRetry: currentRetry, _retries: retries } = test as {
+        _currentRetry?: number
+        _retries?: number
+    }
+
+    if (typeof currentRetry === 'number' && typeof retries === 'number' && currentRetry < retries) {
+        return true
+    }
+
     return Boolean(result.retries && result.retries.attempts < result.retries.limit)
 }
 
+// cucumber-js sets `willBeRetried` on the hook parameter itself; @wdio/types declares it
+// nested under `result`, which is why reading only `result.willBeRetried` silently never
+// matched. Accept both.
 function willBeRetriedByWdioScenario(world: Frameworks.World) {
-    return Boolean(world.result?.willBeRetried)
+    const { willBeRetried } = world as { willBeRetried?: boolean }
+    return Boolean(willBeRetried ?? world.result?.willBeRetried)
 }

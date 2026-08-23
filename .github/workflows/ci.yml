@@ -34,9 +34,10 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      # `#src/*` resolves to build/*.d.ts, so typecheck needs the build to exist first.
+      - run: npm run build
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm run build
       - run: npm run coverage
 
   example:

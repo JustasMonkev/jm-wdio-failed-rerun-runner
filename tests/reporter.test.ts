@@ -145,4 +145,28 @@ describe('rerun reporting', () => {
 
         expect(lines).toEqual([])
     })
+
+    it('does not call a test flaky when no rerun ever targeted it', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'specs', 'login.e2e.ts')
+        const { logger } = createRecordingLogger()
+
+        // maxReruns: 0 disables reruns entirely, so the failure recovered from nothing.
+        const result = await createFailedTestsRerunner({ logger }).run(
+            path.join(workspace, 'wdio.conf.ts'),
+            {
+                cwd: workspace,
+                maxReruns: 0,
+                run: async (_configPath, args) => {
+                    await record(args, spec, 'login flow signs in', false)
+                    return 1
+                }
+            }
+        )
+
+        expect(result.exitCode).toBe(1)
+        expect(result.summary.flaky).toEqual([])
+        expect(result.summary.broken).toEqual([])
+        expect(result.failures.map((test) => test.fullTitle)).toEqual(['login flow signs in'])
+    })
 })
