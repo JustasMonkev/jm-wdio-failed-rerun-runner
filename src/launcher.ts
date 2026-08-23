@@ -1,3 +1,4 @@
+import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
@@ -62,12 +63,12 @@ async function runWithWdioLauncher(Launcher: LauncherConstructor, configPath: st
         return new Launcher(configPath, args).run()
     }
 
-    const wrappedConfigPath = await createConfigWithExtraServices(configPath, args.services)
+    const wrapper = await createConfigWithExtraServices(configPath, args.services)
 
     try {
-        return await new Launcher(wrappedConfigPath, withoutServices(args)).run()
+        return await new Launcher(wrapper.path, withoutServices(args)).run()
     } finally {
-        await fs.rm(wrappedConfigPath, { force: true })
+        await wrapper.remove()
     }
 }
 
@@ -89,6 +90,7 @@ async function assertConfigExists(configPath: string) {
 async function createConfigWithExtraServices(configPath: string, services: NonNullable<FailedRerunRunArgs['services']>) {
     const configDirectory = path.dirname(configPath)
     const wrapperId = randomUUID()
+    const rootDirectory = JSON.stringify(configDirectory)
     // A `.ts` wrapper is compiled to CommonJS in a project without `"type": "module"`,
     // where the top-level await below is a syntax error - so every run with a TypeScript
     // config in such a project failed here. `.mts` is always ESM, and WebdriverIO both
@@ -108,20 +110,55 @@ async function createConfigWithExtraServices(configPath: string, services: NonNu
     // config that reads the rerun environment at module scope. The wrapper's own id makes
     // each attempt a distinct module. A CommonJS config is cached by filename whatever the
     // query says, which is equally true of how WebdriverIO loads it without this wrapper.
-    await fs.writeFile(wrapperPath, `const baseModule = await import(${JSON.stringify(`${pathToFileURL(configPath).href}?wdio-failed-rerun=${wrapperId}`)})
+    return writeWrapper(wrapperPath, `const baseModule = await import(${JSON.stringify(`${pathToFileURL(configPath).href}?wdio-failed-rerun=${wrapperId}`)})
 const baseConfig = baseModule.config || baseModule.default?.config || baseModule.default || {}
 const extraServices = ${serializedServices}
 
 export const config = {
     ...baseConfig,
+    rootDir: baseConfig.rootDir ?? ${rootDirectory},
     services: [
         ...(baseConfig.services || []),
         ...extraServices
     ]
 }
 `)
+}
 
-    return wrapperPath
+// The wrapper goes beside the config so that anything WebdriverIO resolves from the config
+// file's own path keeps working. A project mounted read-only cannot take it, though, and
+// service injection sends every run through here - so rather than fail outright, fall back
+// to a writable temporary directory. `rootDir` above is what makes that safe: without it a
+// relocated wrapper resolves relative `specs` against the temporary directory and matches
+// nothing, which for a rerun tool reads as "everything passed".
+async function writeWrapper(wrapperPath: string, contents: string) {
+    try {
+        await fs.writeFile(wrapperPath, contents)
+        return {
+            path: wrapperPath,
+            remove: () => fs.rm(wrapperPath, { force: true })
+        }
+    } catch (error) {
+        if (!isReadOnlyError(error)) {
+            throw error
+        }
+
+        // The directory is ours, so it goes with the wrapper: leaving one behind per run
+        // would accumulate in the temp directory for as long as the project is deployed
+        // read-only.
+        const fallbackDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'wdio-failed-rerun-'))
+        const fallbackPath = path.join(fallbackDirectory, path.basename(wrapperPath))
+        await fs.writeFile(fallbackPath, contents)
+        return {
+            path: fallbackPath,
+            remove: () => fs.rm(fallbackDirectory, { force: true, recursive: true })
+        }
+    }
+}
+
+function isReadOnlyError(error: unknown) {
+    const code = (error as NodeJS.ErrnoException).code
+    return code === 'EROFS' || code === 'EACCES' || code === 'EPERM'
 }
 
 function withoutServices(args: FailedRerunRunArgs): FailedRerunRunArgs {

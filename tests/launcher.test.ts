@@ -8,6 +8,8 @@ import { promisify } from 'node:util'
 
 import { describe, expect, it } from 'vitest'
 
+import { ConfigParser } from '@wdio/config/node'
+
 import { createWdioRun, loadWdioLauncher } from '#src/launcher'
 
 const require = createRequire(import.meta.url)
@@ -352,6 +354,209 @@ describe('WDIO launcher adapter', () => {
 
                 expect(seen.pop()).toBe(expected)
             }
+        } finally {
+            await fs.rm(workspace, { recursive: true, force: true })
+        }
+    })
+
+    it('pins the config directory as rootDir so a relocated wrapper still finds the specs', async () => {
+        // WebdriverIO derives rootDir from the config file it is handed, and resolves
+        // relative `specs` against it. A wrapper written anywhere but beside the config
+        // would therefore match nothing - and for a rerun tool, zero specs reads as
+        // "everything passed" rather than as an error. Checked against the real parser.
+        const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wdio-launcher-root-'))
+        const project = path.join(workspace, 'project')
+        await fs.mkdir(path.join(project, 'test', 'specs'), { recursive: true })
+        await fs.writeFile(path.join(project, 'test', 'specs', 'a.e2e.js'), '')
+        await fs.writeFile(path.join(project, 'test', 'specs', 'b.e2e.js'), '')
+
+        const configPath = path.join(project, 'wdio.conf.mjs')
+        await fs.writeFile(configPath, `export const config = {
+    specs: ['./test/specs/**/*.js'],
+    capabilities: [{ browserName: 'chrome' }]
+}
+`)
+
+        let resolved: number | undefined
+
+        class ParsingLauncher {
+            constructor(public readonly configPath: string, public readonly args: unknown) {}
+
+            async run() {
+                // Move the generated wrapper away from the config before parsing it, which
+                // is exactly what the read-only fallback does.
+                const moved = path.join(workspace, path.basename(this.configPath))
+                await fs.copyFile(this.configPath, moved)
+
+                const parser = new ConfigParser(moved)
+                await parser.initialize({})
+                resolved = parser.getSpecs().length
+                return 0
+            }
+        }
+
+        try {
+            await expect(createWdioRun(async () => ({ Launcher: ParsingLauncher }))(configPath, {
+                services: [['@wdio/failed-rerun-runner', { attempt: 'initial' }]]
+            })).resolves.toBe(0)
+
+            expect(resolved).toBe(2)
+        } finally {
+            await fs.rm(workspace, { recursive: true, force: true })
+        }
+    })
+
+    // Making a directory unwritable takes different tools depending on who is running:
+    // mode bits are enough for an ordinary user, but root ignores them and needs a
+    // genuinely read-only filesystem.
+    async function makeUnwritable(directory: string) {
+        await fs.chmod(directory, 0o555)
+        if (!await canWrite(directory)) {
+            return async () => { await fs.chmod(directory, 0o755) }
+        }
+
+        try {
+            await promisify(execFile)('mount', ['-t', 'tmpfs', '-o', 'size=1m', 'tmpfs', directory])
+        } catch {
+            return undefined
+        }
+
+        return async () => {
+            await promisify(execFile)('mount', ['-o', 'remount,rw', directory]).catch(() => {})
+            await promisify(execFile)('umount', [directory]).catch(() => {})
+            await fs.chmod(directory, 0o755).catch(() => {})
+        }
+    }
+
+    async function canWrite(directory: string) {
+        const probe = path.join(directory, '.probe')
+        try {
+            await fs.writeFile(probe, '')
+            await fs.rm(probe, { force: true })
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    it('falls back to a temporary directory when the config directory cannot be written', async (context) => {
+        const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wdio-launcher-ro-'))
+        const project = path.join(workspace, 'project')
+        await fs.mkdir(project)
+
+        const restore = await makeUnwritable(project)
+        if (!restore) {
+            await fs.rm(workspace, { recursive: true, force: true })
+            context.skip('cannot make a directory unwritable in this environment')
+            return
+        }
+
+        let wrapperPath: string | undefined
+
+        class RecordingLauncher {
+            constructor(public readonly configPath: string, public readonly args: unknown) {}
+
+            async run() {
+                wrapperPath = this.configPath
+                return 0
+            }
+        }
+
+        try {
+            // A tmpfs mount hides whatever was there, so the config is written through the
+            // same mechanism that made the directory unwritable, then sealed.
+            if (!await canWrite(project)) {
+                await fs.writeFile(path.join(project, 'wdio.conf.mjs'), 'export const config = {}\n')
+            } else {
+                await promisify(execFile)('mount', ['-o', 'remount,rw', project])
+                await fs.writeFile(path.join(project, 'wdio.conf.mjs'), 'export const config = {}\n')
+                await promisify(execFile)('mount', ['-o', 'remount,ro', project])
+            }
+
+            expect(await canWrite(project)).toBe(false)
+
+            await expect(createWdioRun(async () => ({ Launcher: RecordingLauncher }))(
+                path.join(project, 'wdio.conf.mjs'),
+                { services: [['@wdio/failed-rerun-runner', { attempt: 'initial' }]] }
+            )).resolves.toBe(0)
+
+            expect(path.dirname(wrapperPath as string)).not.toBe(project)
+            // The fallback directory is ours, so it goes with the wrapper. One left behind
+            // per run would accumulate for as long as the project is deployed read-only.
+            await expect(fs.access(path.dirname(wrapperPath as string))).rejects.toMatchObject({
+                code: 'ENOENT'
+            })
+        } finally {
+            await restore()
+            await fs.rm(workspace, { recursive: true, force: true })
+        }
+    })
+
+    it('surfaces a write failure that is not about permissions', async () => {
+        // The fallback exists for a config directory that cannot be written to at all. Any
+        // other write failure is a real problem, and quietly relocating would hide it - so
+        // this uses a path long enough that the wrapper name overflows PATH_MAX while the
+        // shorter config name still fits.
+        let directory = await fs.mkdtemp(path.join(os.tmpdir(), 'wdio-launcher-long-'))
+        while (directory.length < 4000) {
+            const next = path.join(directory, 'd'.repeat(200))
+            try {
+                await fs.mkdir(next)
+            } catch {
+                break
+            }
+            directory = next
+        }
+
+        const configPath = path.join(directory, 'wdio.conf.mjs')
+        await fs.writeFile(configPath, 'export const config = {}\n')
+
+        class UnusedLauncher {
+            constructor(public readonly configPath: string, public readonly args: unknown) {}
+
+            async run() {
+                return 0
+            }
+        }
+
+        await expect(createWdioRun(async () => ({ Launcher: UnusedLauncher }))(configPath, {
+            services: [['@wdio/failed-rerun-runner', { attempt: 'initial' }]]
+        })).rejects.toMatchObject({ code: 'ENAMETOOLONG' })
+    })
+
+    it('keeps a rootDir the config sets for itself', async () => {
+        const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wdio-launcher-ownroot-'))
+        const configPath = path.join(workspace, 'wdio.conf.mjs')
+        const chosen = path.join(workspace, 'elsewhere')
+
+        await fs.mkdir(chosen)
+        await fs.writeFile(configPath, `export const config = { rootDir: ${JSON.stringify(chosen)} }\n`)
+
+        let loaded: { rootDir?: string } | undefined
+
+        class FakeLauncher {
+            constructor(public readonly configPath: string, public readonly args: unknown) {}
+
+            async run() {
+                const { stdout } = await promisify(execFile)(process.execPath, [
+                    '--input-type=module',
+                    '-e',
+                    `const { pathToFileURL } = await import('node:url')
+                     const m = await import(pathToFileURL(process.argv[1]).href)
+                     process.stdout.write(JSON.stringify(m.config))`,
+                    this.configPath
+                ])
+                loaded = JSON.parse(stdout) as typeof loaded
+                return 0
+            }
+        }
+
+        try {
+            await expect(createWdioRun(async () => ({ Launcher: FakeLauncher }))(configPath, {
+                services: [['@wdio/failed-rerun-runner', { attempt: 'initial' }]]
+            })).resolves.toBe(0)
+
+            expect(loaded?.rootDir).toBe(chosen)
         } finally {
             await fs.rm(workspace, { recursive: true, force: true })
         }
