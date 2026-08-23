@@ -12,7 +12,12 @@ export class FailedRerunUsageError extends Error {
     }
 }
 
-export function serializeError(error: unknown, seen = new WeakSet<object>()): FailedTestError | undefined {
+// Guards against an error object whose own structure is hostile. This runs inside the
+// WebdriverIO `afterTest` hook, so throwing here would lose the very failure record the
+// rerun depends on.
+const MAX_DEPTH = 200
+
+export function serializeError(error: unknown, seen = new WeakSet<object>(), depth = 0): FailedTestError | undefined {
     if (typeof error === 'string' && error) {
         return {
             message: error
@@ -32,22 +37,27 @@ export function serializeError(error: unknown, seen = new WeakSet<object>()): Fa
     // `seen` tracks the ANCESTOR PATH, not every object ever visited. Leaving entries
     // behind would report a value merely reachable twice - two properties pointing at
     // one shared object, say - as circular, silently dropping real diagnostic data.
+    if (depth >= MAX_DEPTH) {
+        return {
+            message: '[Max depth exceeded]'
+        }
+    }
+
     seen.add(error)
 
     try {
-        const err = error as Error
         const serialized: FailedTestError = {
-            name: err.name,
-            message: err.message,
-            stack: err.stack
+            name: readStringProperty(error, 'name'),
+            message: readStringProperty(error, 'message'),
+            stack: readStringProperty(error, 'stack')
         }
 
-        const cause = toJsonValue(readProperty(error, 'cause'), seen)
+        const cause = toJsonValue(readProperty(error, 'cause'), seen, depth + 1)
         if (cause !== undefined) {
             serialized.cause = cause
         }
 
-        const details = getErrorDetails(error, seen)
+        const details = getErrorDetails(error, seen, depth + 1)
         if (Object.keys(details).length > 0) {
             serialized.details = details
         }
@@ -58,15 +68,42 @@ export function serializeError(error: unknown, seen = new WeakSet<object>()): Fa
     }
 }
 
-function getErrorDetails(error: object, seen: WeakSet<object>) {
+function readStringProperty(value: object, key: string) {
+    const read = readProperty(value, key)
+    return typeof read === 'string' ? read : undefined
+}
+
+// A property can be an accessor that throws, and a Proxy can throw from `ownKeys` or
+// `get`. Neither should be able to take down the run.
+function safeEntries(value: object): Array<[string, unknown]> {
+    let keys: string[]
+    try {
+        keys = Object.keys(value)
+    } catch {
+        return []
+    }
+
+    const entries: Array<[string, unknown]> = []
+    for (const key of keys) {
+        try {
+            entries.push([key, (value as Record<string, unknown>)[key]])
+        } catch {
+            entries.push([key, '[Unreadable]'])
+        }
+    }
+
+    return entries
+}
+
+function getErrorDetails(error: object, seen: WeakSet<object>, depth: number) {
     const details: Record<string, FailedRerunJsonValue> = {}
 
-    for (const [key, value] of Object.entries(error)) {
+    for (const [key, value] of safeEntries(error)) {
         if (key === 'name' || key === 'message' || key === 'stack' || key === 'cause') {
             continue
         }
 
-        const jsonValue = toJsonValue(value, seen)
+        const jsonValue = toJsonValue(value, seen, depth)
         if (jsonValue !== undefined) {
             details[key] = jsonValue
         }
@@ -75,7 +112,7 @@ function getErrorDetails(error: object, seen: WeakSet<object>) {
     return details
 }
 
-function toJsonValue(value: unknown, seen: WeakSet<object>): FailedRerunJsonValue | undefined {
+function toJsonValue(value: unknown, seen: WeakSet<object>, depth = 0): FailedRerunJsonValue | undefined {
     if (value === null || typeof value === 'string' || typeof value === 'boolean') {
         return value
     }
@@ -92,20 +129,24 @@ function toJsonValue(value: unknown, seen: WeakSet<object>): FailedRerunJsonValu
         return '[Circular]'
     }
 
+    if (depth >= MAX_DEPTH) {
+        return '[Max depth exceeded]'
+    }
+
     if (value instanceof Error) {
-        return errorToJsonValue(value, seen)
+        return errorToJsonValue(value, seen, depth)
     }
 
     seen.add(value)
 
     try {
         if (Array.isArray(value)) {
-            return value.map((item) => toJsonValue(item, seen) ?? null)
+            return value.map((item) => toJsonValue(item, seen, depth + 1) ?? null)
         }
 
         const output: Record<string, FailedRerunJsonValue> = {}
-        for (const [key, entryValue] of Object.entries(value)) {
-            const jsonValue = toJsonValue(entryValue, seen)
+        for (const [key, entryValue] of safeEntries(value)) {
+            const jsonValue = toJsonValue(entryValue, seen, depth + 1)
             if (jsonValue !== undefined) {
                 output[key] = jsonValue
             }
@@ -117,8 +158,8 @@ function toJsonValue(value: unknown, seen: WeakSet<object>): FailedRerunJsonValu
     }
 }
 
-function errorToJsonValue(error: Error, seen: WeakSet<object>): FailedRerunJsonValue | undefined {
-    const serialized = serializeError(error, seen)
+function errorToJsonValue(error: Error, seen: WeakSet<object>, depth: number): FailedRerunJsonValue | undefined {
+    const serialized = serializeError(error, seen, depth)
     if (!serialized) {
         return undefined
     }
@@ -134,5 +175,9 @@ function errorToJsonValue(error: Error, seen: WeakSet<object>): FailedRerunJsonV
 }
 
 function readProperty(value: object, key: string) {
-    return (value as Record<string, unknown>)[key]
+    try {
+        return (value as Record<string, unknown>)[key]
+    } catch {
+        return undefined
+    }
 }

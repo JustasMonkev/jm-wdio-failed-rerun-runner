@@ -4,9 +4,15 @@ A minimal WebdriverIO project that demonstrates `jm-wdio-failed-rerun-runner`.
 
 It contains three tests in two spec files:
 
-- `flaky.e2e.js` / "passes only on rerun" — fails on the initial run, passes on rerun
-- `flaky.e2e.js` / "sibling test that always passes"
+- `flaky.e2e.js` / "flaky suite when the environment settles passes only on rerun" —
+  fails on the initial run, passes on rerun
+- `flaky.e2e.js` / "flaky suite when the environment settles sibling test that always passes"
 - `stable.e2e.js` / "always passes"
+
+The flaky spec nests its `describe` blocks on purpose. WebdriverIO gives `afterTest` a
+spread of the Mocha test object, so `fullTitle` is lost and `parent` is only the immediate
+suite; rebuilding the title from those would drop the outer `describe` and the rerun would
+match nothing. A single-level suite hides that, so the demo uses two levels.
 
 ## Run it
 

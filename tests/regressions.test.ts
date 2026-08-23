@@ -9,7 +9,7 @@ import FailedTestRerunService, {
     runFailedTestsRerun
 } from '#src/index'
 import { serializeError } from '#src/errors'
-import { appendFailedTest, readFailedTests } from '#src/manifest'
+import { appendFailedTest, readFailedTests, readManifest } from '#src/manifest'
 import type { FailedRerunRunArgs, FailedRerunServiceOptions } from '#src/types'
 
 const tempDirs: string[] = []
@@ -42,6 +42,35 @@ describe('error serialization', () => {
         // circular silently discards real diagnostic data.
         expect(serialized?.details?.first).toEqual({ id: 1 })
         expect(serialized?.details?.second).toEqual({ id: 1 })
+    })
+
+    it('serializes a shared nested Error every time it appears', () => {
+        // Distinct from the plain-object case: a nested Error is serialized by
+        // serializeError itself rather than by the generic value walker, so it needs its
+        // own coverage that the ancestor set is unwound.
+        const inner = new Error('inner')
+        const error = Object.assign(new Error('outer'), { first: inner, second: inner })
+
+        const details = serializeError(error)?.details as Record<string, { message?: string }>
+
+        expect(details.first.message).toBe('inner')
+        expect(details.second.message).toBe('inner')
+    })
+
+    it('reports a cycle through a nested Error as circular', () => {
+        const inner: Error & { back?: unknown } = new Error('inner')
+        const error = Object.assign(new Error('outer'), { inner })
+        inner.back = error
+
+        // A nested Error is serialized into the same shape as the top-level one, so its
+        // own custom properties live under its `details`.
+        const details = serializeError(error)?.details as Record<string, {
+            message?: string
+            details?: Record<string, unknown>
+        }>
+
+        expect(details.inner.message).toBe('inner')
+        expect(details.inner.details?.back).toBe('[Circular]')
     })
 
     it('still reports a genuine cycle as circular', () => {
@@ -151,6 +180,10 @@ describe('focused rerun execution verification', () => {
         expect(rerun.type).toBe('rerun')
         expect(rerun.type === 'rerun' && rerun.notExecuted.map((test) => test.fullTitle))
             .toEqual(['login flow logs in'])
+        // The attempt reports what the framework actually returned; the run fails because
+        // the targeted test never ran, not because the process claimed failure.
+        expect(rerun.exitCode).toBe(0)
+        expect(rerun.failures).toEqual([])
     })
 
     it('reports success when the rerun proves the targeted test executed', async () => {
@@ -279,6 +312,35 @@ describe('tests that must not be queued for rerun', () => {
     })
 })
 
+describe('manifest path flags', () => {
+    it('uses --manifest-path verbatim for the initial run', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'initial-failures.ndjson')
+        const spec = path.join(workspace, 'a.e2e.ts')
+
+        await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace,
+            quiet: true,
+            maxReruns: 0,
+            manifestPath,
+            run: async (_configPath, args) => {
+                const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
+                await service.afterTest({ title: 't', fullTitle: 'suite t', file: spec } as never, {}, {
+                    passed: false,
+                    duration: 1,
+                    retries: { attempts: 0, limit: 0 }
+                } as never)
+                return 1
+            }
+        })
+
+        // The path the user gave must be the path written, with no label interpolated.
+        expect((await readFailedTests(manifestPath)).map((record) => record.fullTitle))
+            .toEqual(['suite t'])
+        expect(await fs.readdir(workspace)).toContain('initial-failures.ndjson')
+    })
+})
+
 describe('rerun manifest artifact', () => {
     it('keeps every spec group, not just the last one', async () => {
         const workspace = await makeTempDir()
@@ -318,5 +380,131 @@ describe('rerun manifest artifact', () => {
         const recorded = await readFailedTests(rerunManifestPath)
 
         expect(recorded.map((record) => record.fullTitle).sort()).toEqual(['a fails', 'b fails'])
+    })
+
+    it('writes a separate per-group file alongside the combined one', async () => {
+        const workspace = await makeTempDir()
+        const firstSpec = path.join(workspace, 'a.e2e.ts')
+        const secondSpec = path.join(workspace, 'b.e2e.ts')
+        const rerunManifestPath = path.join(workspace, 'rerun-failures.ndjson')
+        let runs = 0
+
+        const failTest = async (args: FailedRerunRunArgs, spec: string, fullTitle: string) => {
+            const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
+            await service.afterTest({ title: fullTitle, fullTitle, file: spec } as never, {}, {
+                passed: false,
+                duration: 1,
+                retries: { attempts: 0, limit: 0 }
+            } as never)
+        }
+
+        await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace,
+            quiet: true,
+            rerunManifestPath,
+            run: async (_configPath, args) => {
+                runs++
+
+                if (runs === 1) {
+                    await failTest(args, firstSpec, 'a fails')
+                    await failTest(args, secondSpec, 'b fails')
+                    return 1
+                }
+
+                await failTest(args, runs === 2 ? firstSpec : secondSpec, runs === 2 ? 'a fails' : 'b fails')
+                return 1
+            }
+        })
+
+        // Each group keeps its own manifest, so a group's failures stay attributable and a
+        // future parallel rerun cannot have two groups overwrite one another's evidence.
+        const first = await readFailedTests(path.join(workspace, 'rerun-failures.rerun-0-0.ndjson'))
+        const second = await readFailedTests(path.join(workspace, 'rerun-failures.rerun-0-1.ndjson'))
+
+        expect(first.map((record) => record.fullTitle)).toEqual(['a fails'])
+        expect(second.map((record) => record.fullTitle)).toEqual(['b fails'])
+    })
+})
+
+describe('in-run retries interacting with rerun evidence', () => {
+    it('records a passing rerun even when the project configures mochaOpts.retries', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'failures.ndjson')
+        const service = new FailedTestRerunService({ manifestPath, attempt: 'rerun' }, {}, {} as WebdriverIO.Config)
+
+        // With `mochaOpts.retries: 2` every test carries `_retries: 2`, and a test that
+        // passes first time still has `_currentRetry: 0`. Mocha only retries failures, so
+        // treating that as "will be retried" would suppress the record and leave the
+        // rerun with no proof the test ran.
+        await service.afterTest({
+            title: 'signs in',
+            fullTitle: 'login signs in',
+            file: 'specs/login.e2e.ts',
+            _currentRetry: 0,
+            _retries: 2
+        } as never, {}, {
+            passed: true,
+            duration: 1,
+            retries: { attempts: 0, limit: 2 }
+        } as never)
+
+        const [record] = await readManifest(manifestPath)
+
+        expect(record.outcome).toBe('passed')
+    })
+
+    it('passes a recovered flaky test under mochaOpts.retries end to end', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'login.e2e.ts')
+        let runs = 0
+
+        const result = await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace,
+            quiet: true,
+            run: async (_configPath, args) => {
+                runs++
+                const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
+                const passed = runs > 1
+
+                await service.afterTest({
+                    title: 'signs in',
+                    fullTitle: 'login signs in',
+                    file: spec,
+                    // The failing run exhausts its retries; the passing run does not need them.
+                    _currentRetry: passed ? 0 : 2,
+                    _retries: 2
+                } as never, {}, {
+                    passed,
+                    duration: 1,
+                    retries: { attempts: 2, limit: 2 }
+                } as never)
+
+                return passed ? 0 : 1
+            }
+        })
+
+        expect(result.exitCode).toBe(0)
+        expect(result.summary.flaky.map((test) => test.fullTitle)).toEqual(['login signs in'])
+        expect(result.summary.notExecuted).toEqual([])
+    })
+
+    it('still withholds a failing test that Mocha will retry', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'failures.ndjson')
+        const service = new FailedTestRerunService({ manifestPath, attempt: 'rerun' }, {}, {} as WebdriverIO.Config)
+
+        await service.afterTest({
+            title: 'flakes',
+            fullTitle: 'suite flakes',
+            file: 'specs/a.e2e.ts',
+            _currentRetry: 0,
+            _retries: 2
+        } as never, {}, {
+            passed: false,
+            duration: 1,
+            retries: { attempts: 2, limit: 2 }
+        } as never)
+
+        expect(await readManifest(manifestPath)).toEqual([])
     })
 })

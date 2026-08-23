@@ -67,6 +67,11 @@ interface RerunSummary {
 
 export const FAILED_RERUN_RETRY_ENV = 'WDIO_FAILED_RERUN_RETRY'
 
+// Each rerun round launches WebdriverIO once per failing spec group, so an absurd count is
+// always a mistake rather than intent. Without a ceiling a permanently failing test would
+// rerun effectively forever.
+export const MAX_RERUNS_LIMIT = 100
+
 // WebdriverIO resolves bare service names as `@wdio/<name>-service` or
 // `wdio-<name>-service`, so the only name-independent way to self-inject
 // the worker service is an absolute path, which the plugin loader imports
@@ -143,7 +148,7 @@ function createRerunSettings(
         manifestPath: resolveManifestPath(options.manifestPath, cwd, 'initial'),
         manifests: deps.manifests || fileSystemManifestStore,
         logger: options.quiet ? silentLogger : (deps.logger || consoleLogger),
-        maxReruns: options.maxReruns ?? 1,
+        maxReruns: clampMaxReruns(options.maxReruns),
         passOnSuccessfulRerun: options.passOnSuccessfulRerun ?? true,
         rerunManifestPath: options.rerunManifestPath,
         retryEnv: deps.retryEnv || processRetryEnv,
@@ -168,6 +173,21 @@ async function runInitialAttempt(configPath: string, settings: RerunSettings): P
         exitCode,
         failures: await readManifestFailures(settings, settings.manifestPath)
     }
+}
+
+// The CLI validates this, but the programmatic API takes a plain number. A non-finite or
+// absurd count would loop the rerun rounds effectively forever, launching WebdriverIO each
+// time, so clamp it to the same ceiling the CLI enforces.
+function clampMaxReruns(maxReruns: number | undefined) {
+    if (maxReruns === undefined) {
+        return 1
+    }
+
+    if (!Number.isFinite(maxReruns) || maxReruns < 0) {
+        return 0
+    }
+
+    return Math.min(Math.floor(maxReruns), MAX_RERUNS_LIMIT)
 }
 
 function shouldRerun(initialAttempt: FailedRerunAttemptResult, maxReruns: number) {
@@ -255,7 +275,7 @@ async function runRerunPlan(
     const failures = dedupeFailedTests(records.filter((record) => record.outcome !== 'passed'))
 
     const rerunAttempt = {
-        exitCode: notExecuted.length > 0 ? exitCode || 1 : exitCode,
+        exitCode,
         failures,
         targeted: plan.tests,
         notExecuted,

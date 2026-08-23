@@ -13,10 +13,10 @@ export default defineConfig({
             // A ratchet just under the current numbers: it fails a regression without
             // failing an unrelated change that happens to shift a line.
             thresholds: {
-                statements: 94,
-                branches: 86,
-                functions: 98,
-                lines: 94
+                statements: 96,
+                branches: 88,
+                functions: 100,
+                lines: 96
             }
         }
     }

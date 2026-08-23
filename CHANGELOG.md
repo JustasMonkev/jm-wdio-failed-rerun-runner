@@ -24,6 +24,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     indistinguishable from "everything passed", so a filter matching zero tests
     produced exit code `0`. Reruns now record executed tests, and a targeted test
     that never ran is a hard failure reported in `notExecuted`.
+- **A passing rerun was reported as "never ran" whenever `mochaOpts.retries` was set.**
+  Mocha marks every test with `_retries`, and a test that passes first time still has
+  `_currentRetry: 0`; treating that as a pending retry suppressed the record that proves
+  the test executed, so a genuinely recovered test failed the build. Mocha only retries
+  failures, so the retry guard no longer applies to passing tests.
+- **A skipped Cucumber scenario counted as a recovery.** `@wdio/cucumber-framework`
+  reports SKIPPED as `passed: true`, so a scenario skipped on rerun - by a tag filter or
+  a skipping Before hook - looked exactly like a test that had recovered.
+- **`serializeError` could throw and lose the failure record.** It runs inside the
+  `afterTest` hook, so an error carrying an accessor that throws, or a Proxy that throws
+  from `ownKeys`, took down the very record the rerun depends on; deeply nested error
+  data overflowed the stack. Property reads are now guarded and recursion is depth-capped.
+- **`--max-reruns` accepted values that hang the run.** `Number('9e20')` passes an integer
+  check, so a permanently failing test would rerun ~1e21 times, launching WebdriverIO each
+  round. Parsing is now strict decimal and bounded, and the programmatic API is clamped.
 - **A skipped test was recorded as a failure.** WebdriverIO reports `this.skip()` as
   `passed: false, skipped: true`, so a skipped test was queued for rerun, skipped
   again, and never resolved, forcing a non-zero exit once reruns were exhausted.

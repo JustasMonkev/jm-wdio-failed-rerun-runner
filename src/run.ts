@@ -3,24 +3,32 @@ import path from 'node:path'
 import * as z from 'zod'
 
 import { FailedRerunUsageError } from '#src/errors'
-import { runFailedTestsRerun } from '#src/rerunner'
+import { MAX_RERUNS_LIMIT, runFailedTestsRerun } from '#src/rerunner'
 
 const nonNegativeIntegerStringSchema = z.string().transform((value, context) => {
-    const maxReruns = Number(value)
-
-    if (!Number.isInteger(maxReruns) || maxReruns < 0) {
-        context.issues.push({
-            code: 'custom',
-            input: value,
-            message: '--max-reruns must be a non-negative integer'
-        })
+    const fail = (message: string) => {
+        context.issues.push({ code: 'custom', input: value, message })
         return z.NEVER
+    }
+
+    // Parse strictly: `Number()` would silently accept '1e3', '0x10', '+5' and ' 5'.
+    if (!/^\d+$/.test(value)) {
+        return fail('--max-reruns must be a non-negative integer')
+    }
+
+    const maxReruns = Number(value)
+    if (!Number.isSafeInteger(maxReruns) || maxReruns > MAX_RERUNS_LIMIT) {
+        return fail(`--max-reruns must be between 0 and ${MAX_RERUNS_LIMIT}`)
     }
 
     return maxReruns
 })
 
-const cliFlagValueSchema = z.string().min(1).refine((value) => !value.startsWith('-'))
+// A leading '-' normally means the next flag, i.e. a missing value. A negative number is
+// the exception: treat it as a value so it reaches the validator and gets an error that
+// names the real problem instead of "Missing value".
+const cliFlagValueSchema = z.string().min(1)
+    .refine((value) => !value.startsWith('-') || /^-\d+$/.test(value))
 
 const parsedCliArgsSchema = z.object({
     configPath: z.string().optional(),

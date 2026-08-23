@@ -29,10 +29,6 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
     }
 
     async afterTest(test: Frameworks.Test, context: unknown, result: Frameworks.TestResult) {
-        if (willBeRetriedByWdio(test, result)) {
-            return
-        }
-
         // A skipped test reaches this hook as `passed: false` with `skipped: true`.
         // Recording it would queue a test that can never pass, so the rerun could never
         // resolve it and the run could never go green. It is also not evidence that a
@@ -41,7 +37,13 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
             return
         }
 
-        if (result.passed && !this.#recordsPassedTests()) {
+        if (result.passed) {
+            // A passing test is never retried, so the retry guard must not apply to it:
+            // suppressing its record would deny the rerun its proof that the test ran.
+            if (!this.#recordsPassedTests()) {
+                return
+            }
+        } else if (willBeRetriedByWdio(test, result)) {
             return
         }
 
@@ -54,11 +56,19 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
     }
 
     async afterScenario(world: Frameworks.World, result: Frameworks.PickleResult, _context: unknown) {
-        if (willBeRetriedByWdioScenario(world)) {
+        // `@wdio/cucumber-framework` reports a SKIPPED scenario as `passed: true`. Counting
+        // that as evidence the scenario ran would let a rerun whose scenario was skipped -
+        // by a tag filter, or a Before hook that skips - be reported as a recovery, turning
+        // a genuinely failing build green.
+        if (isSkippedScenario(world)) {
             return
         }
 
-        if (result.passed && !this.#recordsPassedTests()) {
+        if (result.passed) {
+            if (!this.#recordsPassedTests()) {
+                return
+            }
+        } else if (willBeRetriedByWdioScenario(world)) {
             return
         }
 
@@ -103,6 +113,11 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
 
 function isSkipped(result: Frameworks.TestResult) {
     return Boolean((result as { skipped?: boolean }).skipped)
+}
+
+function isSkippedScenario(world: Frameworks.World) {
+    const { result } = world as { result?: { status?: string } }
+    return result?.status?.toUpperCase() === 'SKIPPED'
 }
 
 // Only the final in-run attempt should decide whether a test lands in the manifest.
