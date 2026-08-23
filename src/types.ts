@@ -1,5 +1,7 @@
 import type { Services } from '@wdio/types'
 
+import type { FailedRerunLogger } from '#src/reporter'
+
 export type FailedRerunAttemptType = 'initial' | 'rerun'
 export type FailedRerunOutcome = 'failed' | 'passed'
 export type FailedRerunFramework = 'mocha' | 'cucumber'
@@ -57,6 +59,7 @@ export interface FailedTestsRerunOptions {
     rerunManifestPath?: string
     maxReruns?: number
     passOnSuccessfulRerun?: boolean
+    quiet?: boolean
     run?: FailedRerunRun
 }
 
@@ -65,6 +68,7 @@ export interface FailedTestsRerunner {
 }
 
 export interface FailedTestsRerunnerDeps {
+    logger?: FailedRerunLogger
     run?: FailedRerunRun
     manifests?: FailedTestManifestStore
     retryEnv?: FailedRerunRetryEnv
@@ -145,8 +149,18 @@ export type FailedRerunAttemptResult =
     | FailedRerunMochaRerunAttemptResult
     | FailedRerunCucumberRerunAttemptResult
 
+export interface FailedRerunSummary {
+    // Failed the initial run, passed a rerun.
+    flaky: FailedTestRecord[]
+    // Failed the initial run and every rerun.
+    broken: FailedTestRecord[]
+    // Targeted by a rerun that never executed them, so the rerun proves nothing.
+    notExecuted: FailedTestRecord[]
+}
+
 export interface FailedRerunResult {
     exitCode: number
     attempts: FailedRerunAttemptResult[]
     failures: FailedTestRecord[]
+    summary: FailedRerunSummary
 }

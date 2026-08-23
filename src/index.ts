@@ -4,4 +4,6 @@ export { createFailedTestsRerunner, FAILED_RERUN_RETRY_ENV, FAILED_RERUN_SERVICE
 export { BROWSERSTACK_RERUN_ENV, BROWSERSTACK_RERUN_TESTS_ENV, processBrowserStackEnv } from '#src/browserstack'
 export { createRerunPlans, createRerunSpecPlans, buildExactTitleGrep, buildExactTitleFilters } from '#src/planner'
 export { appendFailedTest, readFailedTests, readManifest, resetManifest } from '#src/manifest'
+export { consoleLogger, summarize } from '#src/reporter'
+export type { FailedRerunLogger } from '#src/reporter'
 export * from '#src/types'

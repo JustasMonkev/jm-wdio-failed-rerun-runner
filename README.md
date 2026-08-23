@@ -26,6 +26,23 @@ CLI options:
 - `--no-pass-on-successful-rerun`: keep the initial failing exit code even when focused reruns pass.
 - `--manifest-path <path>`: write the initial-run failure manifest to a known path.
 - `--rerun-manifest-path <path>`: write rerun failure manifests to a known path.
+- `-q`, `--quiet`: suppress rerun progress and the final summary.
+
+## Output
+
+The runner reports what it is doing and, at the end, separates tests that recovered
+from tests that stayed broken:
+
+```
+[wdio-failed-rerun] initial run failed: 2 tests across 2 specs
+[wdio-failed-rerun] rerun 1/1: login.e2e.ts (1 test), checkout.e2e.ts (1 test)
+[wdio-failed-rerun] summary: 1 flaky test (passed on rerun), 1 still failing
+[wdio-failed-rerun]   flaky:  login flow signs in
+[wdio-failed-rerun]   broken: checkout applies discount
+```
+
+The same breakdown is available programmatically on `result.summary` as `flaky`,
+`broken` and `notExecuted`. Pass `--quiet` (or `quiet: true`) to silence it.
 
 ## Example
 
@@ -87,7 +104,9 @@ Important options:
 - `rerunManifestPath`: manifest path for rerun rounds. Defaults to temp files.
 - `run`: injectable runner function for tests or custom launchers.
 
-The result includes the final `exitCode`, all run `attempts`, and unresolved `failures`.
+The result includes the final `exitCode`, all run `attempts`, unresolved `failures`, and a
+`summary` splitting the initial failures into `flaky` (passed on rerun), `broken` (failed
+every time) and `notExecuted` (see below).
 
 Advanced callers and tests can create a rerunner with local adapters:
 
@@ -112,6 +131,17 @@ During the initial run, workers inherit `WDIO_FAILED_RERUN_RETRY=0`. During focu
 If a worker exits with failure before any failed test is recorded, the launcher keeps the failing exit code and does not guess which tests to rerun.
 
 If a rerun exits with failure but writes no failure records, the final result stays failed. This preserves hard failures such as setup errors, process crashes, and invalid grep filters.
+
+A focused rerun narrows the run with a title filter, so a filter that matches nothing makes
+the framework exit `0` having run no tests at all. An empty manifest is indistinguishable
+from "everything passed", so reruns record the tests they executed and the runner checks
+that every targeted test actually ran. A test the rerun never executed is reported in
+`notExecuted`, keeps the run failing, and is never counted as a recovery. Without that
+check a stale title, an excluded spec, or an unresolvable path would silently turn a red
+build green.
+
+Custom `manifests` adapters that do not implement `readAll` cannot report passed tests, so
+execution cannot be verified for them and this protection is skipped.
 
 Recorded errors preserve standard `Error` fields plus serializable `cause` and custom enumerable properties. This keeps the manifest useful for diagnostics without allowing non-JSON values to break writes.
 
@@ -152,7 +182,17 @@ const rerunner = createFailedTestsRerunner({
 
 Mocha failures are selected by full title with `mochaOpts.grep`.
 
-Cucumber scenario failures are selected by scenario name with `cucumberOpts.name`. If a feature file contains duplicate scenario names, WebdriverIO's name filter can still match more than one scenario; use unique scenario names for precise focused reruns.
+Cucumber scenario failures are selected by scenario name with `cucumberOpts.name`, passed as
+anchored strings. WebdriverIO forwards launcher arguments to worker processes with
+`childProcess.send()`, which serializes them as JSON, so a `RegExp` would arrive in the
+worker as `{}` and match nothing. If a feature file contains duplicate scenario names,
+WebdriverIO's name filter can still match more than one scenario; use unique scenario names
+for precise focused reruns.
+
+Mocha full titles are read from the live test context. WebdriverIO hands `afterTest` a
+spread of the Mocha test object, which drops `fullTitle` (a prototype method) and reduces
+`parent` to the immediate suite title, so rebuilding the title from `parent + title` would
+lose every outer `describe` and produce a `grep` that matches nothing.
 
 ## Development
 
@@ -219,5 +259,6 @@ flowchart LR
 - Initial workers see `WDIO_FAILED_RERUN_RETRY=0`; first focused rerun workers see `1`.
 - Rerun specs are planned from recorded failures, not from all specs in the config.
 - Multiple failed tests in one spec share a single exact-title filter.
+- A rerun that does not actually execute a test it targeted never counts as a pass.
 - Later rerun rounds are based only on the previous round's unresolved failures.
 - If failure data is missing, the launcher preserves the failing exit code instead of widening the rerun.

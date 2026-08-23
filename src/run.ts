@@ -28,6 +28,7 @@ const parsedCliArgsSchema = z.object({
         manifestPath: z.string().optional(),
         maxReruns: nonNegativeIntegerStringSchema.optional(),
         passOnSuccessfulRerun: z.boolean().optional(),
+        quiet: z.boolean().optional(),
         rerunManifestPath: z.string().optional()
     })
 }).superRefine((value, context) => {
@@ -102,6 +103,11 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
         if (arg === '--help' || arg === '-h') {
             parsed.help = true
             break
+        }
+
+        if (arg === '--quiet' || arg === '-q') {
+            parsed.options.quiet = true
+            continue
         }
 
         if (arg === '--pass-on-successful-rerun') {
@@ -191,5 +197,6 @@ Options:
   --rerun-manifest-path <path>      Path for rerun failure manifests.
   --pass-on-successful-rerun        Return 0 when focused reruns pass. This is the default.
   --no-pass-on-successful-rerun     Keep the initial failing exit code after successful reruns.
+  -q, --quiet                       Suppress rerun progress and the final summary.
   -h, --help                        Show this help message.`)
 }

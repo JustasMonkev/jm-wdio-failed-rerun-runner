@@ -7,6 +7,14 @@ import { processBrowserStackEnv } from '#src/browserstack'
 import { runWdio } from '#src/launcher'
 import { dedupeFailedTests, getFailureKey, readFailedTests, readManifest, resetManifest } from '#src/manifest'
 import { buildExactTitleFilters, createRerunSpecPlans } from '#src/planner'
+import {
+    consoleLogger,
+    reportInitialFailures,
+    reportRerunStart,
+    reportSummary,
+    summarize
+} from '#src/reporter'
+import type { FailedRerunLogger } from '#src/reporter'
 import type {
     FailedRerunAttemptResult,
     FailedRerunAttemptType,
@@ -15,6 +23,7 @@ import type {
     FailedRerunRun,
     FailedRerunRunArgs,
     FailedRerunResult,
+    FailedRerunSummary,
     FailedTestManifestStore,
     FailedTestRecord,
     FailedTestsRerunOptions,
@@ -25,6 +34,7 @@ import type {
 
 interface RerunSettings {
     args: FailedRerunRunArgs
+    logger: FailedRerunLogger
     browserstackEnv: FailedRerunBrowserStackEnv
     cwd: string
     manifestPath: string
@@ -66,6 +76,10 @@ const processRetryEnv: FailedRerunRetryEnv = {
     withRetry: runWithRetryEnv
 }
 
+const silentLogger: FailedRerunLogger = {
+    log: () => {}
+}
+
 export function createFailedTestsRerunner(deps: FailedTestsRerunnerDeps = {}): FailedTestsRerunner {
     return {
         run: (configPath, options = {}) => runFailedTestsRerunWithDeps(configPath, options, deps)
@@ -84,11 +98,28 @@ async function runFailedTestsRerunWithDeps(
     const attempts: FailedRerunAttemptResult[] = [initialAttempt]
 
     if (!shouldRerun(initialAttempt, settings.maxReruns)) {
-        return createResult(initialAttempt.exitCode, attempts, initialAttempt.failures)
+        return createResult(
+            initialAttempt.exitCode,
+            attempts,
+            initialAttempt.failures,
+            summarize(initialAttempt.failures, attempts)
+        )
     }
 
+    reportInitialFailures(initialAttempt.failures, settings.logger)
+
     const reruns = await runRerunRounds(configPath, settings, initialAttempt.failures, attempts)
-    return createRerunResult(initialAttempt.exitCode, attempts, reruns, settings.passOnSuccessfulRerun)
+    const result = createRerunResult(
+        initialAttempt.exitCode,
+        attempts,
+        reruns,
+        settings.passOnSuccessfulRerun,
+        summarize(initialAttempt.failures, attempts)
+    )
+
+    reportSummary(result, settings.logger)
+
+    return result
 }
 
 function createRerunSettings(
@@ -103,6 +134,7 @@ function createRerunSettings(
         cwd,
         manifestPath: resolveManifestPath(options.manifestPath, cwd, 'initial'),
         manifests: deps.manifests || fileSystemManifestStore,
+        logger: options.quiet ? silentLogger : (deps.logger || consoleLogger),
         maxReruns: options.maxReruns ?? 1,
         passOnSuccessfulRerun: options.passOnSuccessfulRerun ?? true,
         rerunManifestPath: options.rerunManifestPath,
@@ -174,7 +206,10 @@ async function runRerunRound(
     let roundExitCode = 0
     let hadHardFailure = false
 
-    for (const [index, plan] of createRerunSpecPlans(failures).entries()) {
+    const plans = createRerunSpecPlans(failures)
+    reportRerunStart(round, settings.maxReruns, plans, settings.logger)
+
+    for (const [index, plan] of plans.entries()) {
         const attempt = await runRerunPlan(configPath, settings, round, index, plan)
 
         attempts.push(attempt)
@@ -280,12 +315,13 @@ function createRerunResult(
     initialExitCode: number,
     attempts: FailedRerunAttemptResult[],
     reruns: RerunSummary,
-    passOnSuccessfulRerun: boolean
+    passOnSuccessfulRerun: boolean,
+    summary: FailedRerunSummary
 ) {
     const rerunsPassed = !reruns.hadHardFailure && reruns.failures.length === 0 && reruns.lastExitCode === 0
     const exitCode = getFinalExitCode(rerunsPassed, initialExitCode, passOnSuccessfulRerun)
 
-    return createResult(exitCode, attempts, reruns.failures)
+    return createResult(exitCode, attempts, reruns.failures, summary)
 }
 
 function getFinalExitCode(rerunsPassed: boolean, initialExitCode: number, passOnSuccessfulRerun: boolean) {
@@ -311,11 +347,17 @@ async function runWithRetryEnv<T>(retry: number, run: () => Promise<T>) {
     }
 }
 
-function createResult(exitCode: number, attempts: FailedRerunAttemptResult[], failures: FailedTestRecord[]) {
+function createResult(
+    exitCode: number,
+    attempts: FailedRerunAttemptResult[],
+    failures: FailedTestRecord[],
+    summary: FailedRerunSummary
+) {
     return {
         exitCode,
         attempts,
-        failures
+        failures,
+        summary
     }
 }
 
