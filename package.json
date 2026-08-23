@@ -1,86 +1,90 @@
 {
-  "name": "jm-wdio-failed-rerun-runner",
-  "version": "0.0.1",
-  "description": "A WebdriverIO helper that reruns only tests that failed in the initial run.",
-  "license": "MIT",
-  "author": "https://github.com/JustasMonkev",
-  "engines": {
-    "node": ">=18.20.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/JustasMonkev/jm-wdio-failed-rerun-runner.git"
-  },
-  "bugs": {
-    "url": "https://github.com/JustasMonkev/jm-wdio-failed-rerun-runner/issues"
-  },
-  "homepage": "https://github.com/JustasMonkev/jm-wdio-failed-rerun-runner#readme",
-  "keywords": [
-    "webdriver",
-    "webdriverio",
-    "wdio",
-    "rerun",
-    "retry"
-  ],
-  "bin": {
-    "wdio-failed-rerun-runner": "./build/cli.js"
-  },
-  "type": "module",
-  "imports": {
-    "#src/*": {
-      "types": "./build/*.d.ts",
-      "default": "./build/*.js"
-    }
-  },
-  "types": "./build/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./build/index.d.ts",
-      "import": "./build/index.js"
+    "name": "jm-wdio-failed-rerun-runner",
+    "version": "0.0.1",
+    "description": "A WebdriverIO helper that reruns only tests that failed in the initial run.",
+    "license": "MIT",
+    "author": "https://github.com/JustasMonkev",
+    "engines": {
+        "node": ">=18.20.0"
     },
-    "./run": {
-      "types": "./build/run.d.ts",
-      "import": "./build/run.js"
-    }
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "check": "npm run lint && npm run typecheck && npm run coverage",
-    "lint": "eslint .",
-    "prepack": "npm run build",
-    "test": "npm run build && vitest run tests",
-    "coverage": "npm run build && vitest run tests --coverage",
-    "pretypecheck": "npm run build",
-    "typecheck": "tsc -p tsconfig.test.json --noEmit"
-  },
-  "files": [
-    "build",
-    "src",
-    "README.md",
-    "LICENSE"
-  ],
-  "dependencies": {
-    "@wdio/cli": "^9.31.2",
-    "@wdio/types": "^9.31.2",
-    "zod": "^4.4.3"
-  },
-  "devDependencies": {
-    "@eslint/js": "^10.0.1",
-    "@types/node": "^26.2.0",
-    "@vitest/coverage-v8": "^4.1.11",
-    "eslint": "^10.9.0",
-    "exit-hook": "^4.0.0",
-    "jiti": "^2.7.0",
-    "mocha": "^11.8.0",
-    "typescript": "^6.0.3",
-    "typescript-eslint": "^8.67.0",
-    "vitest": "^4.1.11"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
-  "overrides": {
-    "esbuild": "^0.28.1"
-  },
-  "sideEffects": false
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/JustasMonkev/jm-wdio-failed-rerun-runner.git"
+    },
+    "bugs": {
+        "url": "https://github.com/JustasMonkev/jm-wdio-failed-rerun-runner/issues"
+    },
+    "homepage": "https://github.com/JustasMonkev/jm-wdio-failed-rerun-runner#readme",
+    "keywords": [
+        "webdriver",
+        "webdriverio",
+        "wdio",
+        "rerun",
+        "retry"
+    ],
+    "bin": {
+        "wdio-failed-rerun-runner": "./build/cli.js"
+    },
+    "type": "module",
+    "imports": {
+        "#src/*": {
+            "types": "./build/*.d.ts",
+            "default": "./build/*.js"
+        }
+    },
+    "types": "./build/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./build/index.d.ts",
+            "import": "./build/index.js"
+        },
+        "./run": {
+            "types": "./build/run.d.ts",
+            "import": "./build/run.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "check": "npm run lint && npm run typecheck && npm run coverage",
+        "lint": "eslint .",
+        "prepack": "npm run build",
+        "test": "npm run build && vitest run tests",
+        "coverage": "npm run build && vitest run tests --coverage",
+        "pretypecheck": "npm run build",
+        "typecheck": "tsc -p tsconfig.test.json --noEmit"
+    },
+    "files": [
+        "build",
+        "src",
+        "README.md",
+        "LICENSE"
+    ],
+    "dependencies": {
+        "zod": "^4.4.3"
+    },
+    "peerDependencies": {
+        "@wdio/cli": "^9.0.0",
+        "@wdio/types": "^9.0.0"
+    },
+    "devDependencies": {
+        "@eslint/js": "^10.0.1",
+        "@types/node": "^26.2.0",
+        "@vitest/coverage-v8": "^4.1.11",
+        "@wdio/cli": "^9.31.2",
+        "@wdio/types": "^9.31.2",
+        "eslint": "^10.9.0",
+        "exit-hook": "^4.0.0",
+        "jiti": "^2.7.0",
+        "mocha": "^11.8.0",
+        "typescript": "^6.0.3",
+        "typescript-eslint": "^8.67.0",
+        "vitest": "^4.1.11"
+    },
+    "publishConfig": {
+        "access": "public"
+    },
+    "overrides": {
+        "esbuild": "^0.28.1"
+    },
+    "sideEffects": false
 }

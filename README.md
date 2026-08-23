@@ -10,6 +10,10 @@ The package is useful when you want a rerun step after the main run finishes, in
 npm install --save-dev jm-wdio-failed-rerun-runner
 ```
 
+`@wdio/cli` and `@wdio/types` (v9) are peer dependencies, so the runner launches **your**
+WebdriverIO rather than a second copy of it. Any WebdriverIO project already has both, and
+npm installs peers automatically; nothing else is needed.
+
 A runnable demo project lives in [`example/`](./example/README.md).
 
 ## Usage
