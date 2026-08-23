@@ -12,6 +12,8 @@ import type {
     FailedRerunRunArgs
 } from '#src/types'
 
+const TYPESCRIPT_CONFIG_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts'])
+
 type LauncherConstructor = new (
     configPath: string,
     args: FailedRerunRunArgs
@@ -86,9 +88,13 @@ async function assertConfigExists(configPath: string) {
 
 async function createConfigWithExtraServices(configPath: string, services: NonNullable<FailedRerunRunArgs['services']>) {
     const configDirectory = path.dirname(configPath)
-    const configExtension = path.extname(configPath)
-    const wrapperExtension = configExtension === '.ts' ? '.ts' : '.mjs'
-    const wrapperPath = path.join(configDirectory, `.wdio-failed-rerun-${randomUUID()}${wrapperExtension}`)
+    const wrapperId = randomUUID()
+    // A `.ts` wrapper is compiled to CommonJS in a project without `"type": "module"`,
+    // where the top-level await below is a syntax error - so every run with a TypeScript
+    // config in such a project failed here. `.mts` is always ESM, and WebdriverIO both
+    // accepts it as a config extension and registers its TypeScript loader by suffix.
+    const wrapperExtension = TYPESCRIPT_CONFIG_EXTENSIONS.has(path.extname(configPath)) ? '.mts' : '.mjs'
+    const wrapperPath = path.join(configDirectory, `.wdio-failed-rerun-${wrapperId}${wrapperExtension}`)
     const serializedServices = JSON.stringify(assertJsonSerializable(services), null, 4)
 
     // A relative specifier is resolved as a URL, not as a filesystem path, so a config whose
@@ -96,7 +102,13 @@ async function createConfigWithExtraServices(configPath: string, services: NonNu
     // fragment or query, and `%20` percent-decodes to a different filename. Service
     // injection sends every normal run through this wrapper, so that would fail a config
     // WebdriverIO itself would have loaded. A file URL carries the literal path through.
-    await fs.writeFile(wrapperPath, `const baseModule = await import(${JSON.stringify(pathToFileURL(configPath).href)})
+    //
+    // Every attempt runs in this same process, so without the query Node's module registry
+    // would hand a rerun the config object the initial attempt evaluated - stale for any
+    // config that reads the rerun environment at module scope. The wrapper's own id makes
+    // each attempt a distinct module. A CommonJS config is cached by filename whatever the
+    // query says, which is equally true of how WebdriverIO loads it without this wrapper.
+    await fs.writeFile(wrapperPath, `const baseModule = await import(${JSON.stringify(`${pathToFileURL(configPath).href}?wdio-failed-rerun=${wrapperId}`)})
 const baseConfig = baseModule.config || baseModule.default?.config || baseModule.default || {}
 const extraServices = ${serializedServices}
 

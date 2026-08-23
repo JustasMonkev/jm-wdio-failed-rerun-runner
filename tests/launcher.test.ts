@@ -2,11 +2,15 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
 import { describe, expect, it } from 'vitest'
 
 import { createWdioRun, loadWdioLauncher } from '#src/launcher'
+
+const require = createRequire(import.meta.url)
 
 describe('WDIO launcher adapter', () => {
     it('loads the real @wdio/cli Launcher export', async () => {
@@ -206,6 +210,148 @@ describe('WDIO launcher adapter', () => {
             })).resolves.toBe(0)
 
             expect(loaded?.specs).toEqual(['./from-the-real-config.js'])
+        } finally {
+            await fs.rm(workspace, { recursive: true, force: true })
+        }
+    })
+
+    // Both of these need Node to load the wrapper, so they run it in a real process for
+    // the same reason as the cases above.
+    async function loadThroughWrapper(configPath: string, extraEnv: NodeJS.ProcessEnv = {}) {
+        let loaded: { retryAttempt?: unknown, specs?: unknown[] } | undefined
+
+        class FakeLauncher {
+            constructor(public readonly configPath: string, public readonly args: unknown) {}
+
+            async run() {
+                const { stdout } = await promisify(execFile)(process.execPath, [
+                    '--import', pathToFileURL(require.resolve('tsx')).href,
+                    '--input-type=module',
+                    '-e',
+                    `const { pathToFileURL } = await import('node:url')
+                     const m = await import(pathToFileURL(process.argv[1]).href)
+                     process.stdout.write(JSON.stringify(m.config))`,
+                    this.configPath
+                ], { env: { ...process.env, ...extraEnv } })
+                loaded = JSON.parse(stdout) as typeof loaded
+                return 0
+            }
+        }
+
+        await expect(createWdioRun(async () => ({ Launcher: FakeLauncher }))(configPath, {
+            services: [['@wdio/failed-rerun-runner', { attempt: 'initial' }]]
+        })).resolves.toBe(0)
+
+        return loaded
+    }
+
+    it('loads a TypeScript config from a project that is not an ES module', async () => {
+        // Without `"type": "module"` a `.ts` wrapper compiles to CommonJS, where the
+        // wrapper's top-level await is a syntax error. Service injection always writes a
+        // wrapper, so this shape has to work.
+        const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wdio-launcher-cjs-'))
+        const configPath = path.join(workspace, 'wdio.conf.ts')
+
+        await fs.writeFile(path.join(workspace, 'package.json'), JSON.stringify({ name: 'p', private: true }))
+        await fs.writeFile(configPath, 'export const config = { specs: [\'./from-the-real-config.js\'] }\n')
+
+        try {
+            expect((await loadThroughWrapper(configPath))?.specs).toEqual(['./from-the-real-config.js'])
+        } finally {
+            await fs.rm(workspace, { recursive: true, force: true })
+        }
+    })
+
+    it('re-evaluates a config that reads the rerun environment on every attempt', async () => {
+        // Every attempt runs in one process, so this has to load both wrappers in one
+        // process too. Spawning a fresh Node per attempt would clear the module registry
+        // and pass whether or not the base import is cache-busted.
+        const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wdio-launcher-cache-'))
+        const configPath = path.join(workspace, 'wdio.conf.mjs')
+
+        await fs.writeFile(path.join(workspace, 'package.json'),
+            JSON.stringify({ name: 'p', private: true, type: 'module' }))
+        await fs.writeFile(configPath,
+            'export const config = { retryAttempt: process.env.WDIO_FAILED_RERUN_RETRY }\n')
+
+        const wrappers: string[] = []
+
+        class CapturingLauncher {
+            constructor(public readonly configPath: string, public readonly args: unknown) {}
+
+            async run() {
+                // Keep each attempt's generated wrapper: the runner deletes it, and both
+                // are needed alive at once to replay them in a single process.
+                const kept = path.join(workspace, `kept-${wrappers.length}.mjs`)
+                await fs.copyFile(this.configPath, kept)
+                wrappers.push(kept)
+                return 0
+            }
+        }
+
+        try {
+            const run = createWdioRun(async () => ({ Launcher: CapturingLauncher }))
+            const args = { services: [['@wdio/failed-rerun-runner', { attempt: 'initial' }]] }
+
+            await run(configPath, args as never)
+            await run(configPath, args as never)
+
+            const { stdout } = await promisify(execFile)(process.execPath, [
+                '--input-type=module',
+                '-e',
+                `const { pathToFileURL } = await import('node:url')
+                 const seen = []
+                 for (const [index, wrapper] of process.argv.slice(1).entries()) {
+                     process.env.WDIO_FAILED_RERUN_RETRY = String(index)
+                     const m = await import(pathToFileURL(wrapper).href)
+                     seen.push(m.config.retryAttempt)
+                 }
+                 process.stdout.write(JSON.stringify(seen))`,
+                ...wrappers
+            ])
+
+            // Attempt 0 saw RETRY=0 and attempt 1 saw RETRY=1. A cached base config would
+            // report '0' twice.
+            expect(JSON.parse(stdout)).toEqual(['0', '1'])
+        } finally {
+            await fs.rm(workspace, { recursive: true, force: true })
+        }
+    })
+
+    it('hands WebdriverIO a wrapper it will register its TypeScript loader for', async () => {
+        // WebdriverIO decides whether to load tsx by the config path's suffix
+        // (`TS_FILE_EXTENSIONS.some((ext) => this._configFilePath.endsWith(ext))`), so a
+        // `.mjs` wrapper for a TypeScript config would leave the base config untransformable
+        // in the launcher process. `.mts` keeps that suffix and is always an ES module.
+        const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'wdio-launcher-ts-'))
+        const seen: string[] = []
+
+        class RecordingLauncher {
+            constructor(public readonly configPath: string, public readonly args: unknown) {}
+
+            async run() {
+                seen.push(path.extname(this.configPath))
+                return 0
+            }
+        }
+
+        try {
+            for (const [configName, expected] of [
+                ['wdio.conf.ts', '.mts'],
+                ['wdio.conf.mts', '.mts'],
+                ['wdio.conf.cts', '.mts'],
+                ['wdio.conf.mjs', '.mjs'],
+                ['wdio.conf.js', '.mjs']
+            ]) {
+                const configPath = path.join(workspace, configName)
+                await fs.writeFile(configPath, 'export const config = {}\n')
+
+                await expect(createWdioRun(async () => ({ Launcher: RecordingLauncher }))(configPath, {
+                    services: [['@wdio/failed-rerun-runner', { attempt: 'initial' }]]
+                })).resolves.toBe(0)
+
+                expect(seen.pop()).toBe(expected)
+            }
         } finally {
             await fs.rm(workspace, { recursive: true, force: true })
         }
