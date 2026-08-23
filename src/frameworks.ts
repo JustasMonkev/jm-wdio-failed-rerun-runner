@@ -94,9 +94,11 @@ export function createCucumberFailedScenarioRecord(
     }
 }
 
-// A failure record carries no `outcome`: that keeps the manifest format unchanged for the
-// only records the initial run ever writes. `passed` is written solely by focused reruns,
-// where it is the evidence that a targeted test actually executed.
+// A failure record carries no `outcome`, which keeps the manifest format unchanged for the
+// records that existed before outcomes were tracked. A `passed` record is written for every
+// test that completes, and does two jobs: during a focused rerun it is the evidence that a
+// targeted test actually executed, and in any attempt it supersedes an earlier failure for
+// the same test - which is how a WebdriverIO spec-file retry retires the attempt it replaced.
 function passedOutcome(context: RecordContext) {
     return context.outcome === 'passed' ? { outcome: 'passed' as const } : {}
 }

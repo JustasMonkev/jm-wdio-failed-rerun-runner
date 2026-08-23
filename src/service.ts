@@ -37,13 +37,8 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
             return
         }
 
-        if (result.passed) {
-            // A passing test is never retried, so the retry guard must not apply to it:
-            // suppressing its record would deny the rerun its proof that the test ran.
-            if (!this.#recordsPassedTests()) {
-                return
-            }
-        } else if (willBeRetriedByWdio(test, result)) {
+        // A passing test is never retried, so the retry guard must not apply to it.
+        if (!result.passed && willBeRetriedByWdio(test, result)) {
             return
         }
 
@@ -64,11 +59,7 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
             return
         }
 
-        if (result.passed) {
-            if (!this.#recordsPassedTests()) {
-                return
-            }
-        } else if (willBeRetriedByWdioScenario(world)) {
+        if (!result.passed && willBeRetriedByWdioScenario(world)) {
             return
         }
 
@@ -77,15 +68,6 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
             result,
             this.#recordContext(result.passed)
         ))
-    }
-
-    // During a focused rerun the runner must be able to prove that the tests it
-    // targeted actually executed: a filter that matches nothing produces an empty
-    // manifest, which is indistinguishable from "everything passed". Recording
-    // passed tests too is only affordable here because a rerun's test set is small
-    // by construction, so the initial run still records failures only.
-    #recordsPassedTests() {
-        return this.options.attempt === 'rerun'
     }
 
     #recordContext(passed?: boolean) {

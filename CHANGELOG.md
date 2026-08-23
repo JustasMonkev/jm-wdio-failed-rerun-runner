@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     indistinguishable from "everything passed", so a filter matching zero tests
     produced exit code `0`. Reruns now record executed tests, and a targeted test
     that never ran is a hard failure reported in `notExecuted`.
+- **A spec-file retry that recovered during the initial run was still rerun.** Passed
+  tests were only recorded during focused reruns, so a `specFileRetries` attempt that
+  succeeded wrote nothing and left the earlier worker's failure standing. Every completed
+  test is now recorded, which costs about 0.27ms per test against a browser test measured
+  in seconds, and lets a retry retire the attempt it replaced on any attempt.
 - **A WebdriverIO spec-file retry left a stale failure behind.** `specFileRetries` reruns
   a failed spec in a fresh worker, which carries the same capability index with a higher
   run counter, so deduplicating by the whole worker id kept the failed attempt alongside

@@ -71,6 +71,71 @@ describe('records from different workers are distinct executions', () => {
         expect(failures[0].cid).toBe('0-0')
     })
 
+    it('lets a spec-file retry supersede its earlier attempt during the initial run', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'failures.ndjson')
+        const previous = process.env.WDIO_WORKER_ID
+
+        const record = async (cid: string, passed: boolean) => {
+            process.env.WDIO_WORKER_ID = cid
+            const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+            await service.afterTest({
+                title: 'signs in',
+                fullTitle: 'login signs in',
+                file: 'specs/login.e2e.ts'
+            } as never, {}, {
+                passed,
+                duration: 1,
+                retries: { attempts: 0, limit: 0 }
+            } as never)
+        }
+
+        try {
+            // specFileRetries applies to the initial attempt too. Recording failures only
+            // there would leave nothing for the retry's pass to supersede, so a test
+            // WebdriverIO had already recovered would still be queued for a focused rerun.
+            await record('0-0', false)
+            await record('0-1', true)
+
+            expect(await readFailedTests(manifestPath)).toEqual([])
+        } finally {
+            if (previous === undefined) {
+                delete process.env.WDIO_WORKER_ID
+            } else {
+                process.env.WDIO_WORKER_ID = previous
+            }
+        }
+    })
+
+    it('lets a spec-file retry supersede an earlier Cucumber failure', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'failures.ndjson')
+        const previous = process.env.WDIO_WORKER_ID
+
+        const record = async (cid: string, passed: boolean) => {
+            process.env.WDIO_WORKER_ID = cid
+            const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+            await service.afterScenario(
+                { pickle: { name: 'signs in', uri: 'features/login.feature' }, result: { status: passed ? 'PASSED' : 'FAILED' } } as never,
+                { passed, duration: 1 } as never,
+                {}
+            )
+        }
+
+        try {
+            await record('0-0', false)
+            await record('0-1', true)
+
+            expect(await readFailedTests(manifestPath)).toEqual([])
+        } finally {
+            if (previous === undefined) {
+                delete process.env.WDIO_WORKER_ID
+            } else {
+                process.env.WDIO_WORKER_ID = previous
+            }
+        }
+    })
+
     it('lets a WebdriverIO spec-file retry supersede the attempt it replaced', async () => {
         const workspace = await makeTempDir()
         const manifestPath = path.join(workspace, 'failures.ndjson')
