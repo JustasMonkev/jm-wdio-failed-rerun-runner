@@ -5,6 +5,7 @@ export { BROWSERSTACK_RERUN_ENV, BROWSERSTACK_RERUN_TESTS_ENV, processBrowserSta
 export { createRerunPlans, createRerunSpecPlans, buildExactTitleGrep, buildExactTitleFilters } from '#src/planner'
 export { appendFailedTest, readFailedTests, readManifest, resetManifest } from '#src/manifest'
 export { FailedRerunUsageError } from '#src/errors'
+export { exitWith, flushStream } from '#src/run'
 export { consoleLogger, summarize } from '#src/reporter'
 export type { FailedRerunLogger } from '#src/reporter'
 export * from '#src/types'

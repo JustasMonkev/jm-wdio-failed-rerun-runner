@@ -114,7 +114,7 @@ function getJasmineFullTitle(test: Frameworks.Test) {
 }
 
 function getMochaFullTitle(test: Frameworks.Test, testContext?: unknown) {
-    const fromTest = resolveFullTitle(readProperty(test, 'fullTitle') as FullTitle | undefined)
+    const fromTest = resolveFullTitleFrom(test)
     if (fromTest) {
         return fromTest
     }
@@ -127,7 +127,7 @@ function getMochaFullTitle(test: Frameworks.Test, testContext?: unknown) {
     // `describe`, and the resulting `mochaOpts.grep` cannot match the title Mocha
     // actually greps against. The live context still holds the real Runnable, whose
     // `fullTitle()` is exactly what Mocha filters on.
-    const fromContext = resolveFullTitle(readContextFullTitle(testContext))
+    const fromContext = resolveContextFullTitle(testContext)
     if (fromContext) {
         return fromContext
     }
@@ -135,34 +135,44 @@ function getMochaFullTitle(test: Frameworks.Test, testContext?: unknown) {
     return parseNonEmptyString([test.parent, test.title].filter(Boolean).join(' '))
 }
 
-function resolveFullTitle(fullTitle: FullTitle | undefined) {
+// `fullTitle` must be invoked AS A METHOD of the runnable that owns it: Mocha's
+// implementation is `this.titlePath().join(' ')`, so calling a detached reference throws
+// `this.titlePath is not a function` and takes the whole afterTest hook down with it.
+function resolveFullTitleFrom(owner: unknown) {
+    if (!owner || typeof owner !== 'object') {
+        return undefined
+    }
+
+    const fullTitle = readProperty(owner, 'fullTitle') as FullTitle | undefined
+
     const stringTitle = parseNonEmptyString(fullTitle)
     if (stringTitle) {
         return stringTitle
     }
 
-    const callbackTitle = fullTitleCallbackSchema.safeParse(fullTitle)
-    if (callbackTitle.success) {
-        return parseNonEmptyString(callbackTitle.data())
+    if (!fullTitleCallbackSchema.safeParse(fullTitle).success) {
+        return undefined
     }
 
-    return undefined
+    try {
+        return parseNonEmptyString((owner as { fullTitle(): unknown }).fullTitle())
+    } catch {
+        // A framework whose accessor throws must not cost us the failure record.
+        return undefined
+    }
 }
 
 // Mocha exposes the running test as `this.test`; `afterEach`-style contexts use
 // `this.currentTest` instead.
-function readContextFullTitle(testContext: unknown): FullTitle | undefined {
+function resolveContextFullTitle(testContext: unknown) {
     if (!testContext || typeof testContext !== 'object') {
         return undefined
     }
 
     for (const key of ['test', 'currentTest'] as const) {
-        const runnable = readProperty(testContext, key)
-        if (runnable && typeof runnable === 'object') {
-            const fullTitle = readProperty(runnable, 'fullTitle') as FullTitle | undefined
-            if (fullTitle !== undefined) {
-                return fullTitle
-            }
+        const resolved = resolveFullTitleFrom(readProperty(testContext, key))
+        if (resolved) {
+            return resolved
         }
     }
 

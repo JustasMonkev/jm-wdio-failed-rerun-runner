@@ -12,10 +12,14 @@ export default defineConfig({
             reporter: ['text', 'lcov'],
             // A ratchet just under the current numbers: it fails a regression without
             // failing an unrelated change that happens to shift a line.
+            //
+            // Functions cannot reach 100 here: `exitWith` ends the process, so it can only
+            // be exercised from a spawned child, and v8 does not instrument those. It is
+            // covered by the subprocess tests in tests/realFrameworks.test.ts.
             thresholds: {
                 statements: 96,
-                branches: 88,
-                functions: 100,
+                branches: 89,
+                functions: 99,
                 lines: 96
             }
         }

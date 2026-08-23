@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     indistinguishable from "everything passed", so a filter matching zero tests
     produced exit code `0`. Reruns now record executed tests, and a targeted test
     that never ran is a hard failure reported in `notExecuted`.
+- **The CLI exited 0 on every failing run.** WebdriverIO's launcher registers an
+  `exit-hook` handler, and `exit-hook@4` replaces the exit path such that a process
+  which only sets `process.exitCode` still exits `0`. Exiting explicitly is the only
+  reliable signal, so the CLI now drains stdout and stderr and then exits with the code -
+  `process.exit` alone would truncate the summary the reporter had just printed.
+- **Mocha full titles were read by calling `fullTitle` detached from its runnable.**
+  Mocha implements it as `this.titlePath().join(' ')`, so the call threw
+  `this.titlePath is not a function`, took down the `afterTest` hook, and lost the
+  failure record entirely. It is now invoked as a method of the runnable that owns it,
+  and a throwing accessor falls back instead of failing the hook.
 - **A passing rerun was reported as "never ran" whenever `mochaOpts.retries` was set.**
   Mocha marks every test with `_retries`, and a test that passes first time still has
   `_currentRetry: 0`; treating that as a pending retry suppressed the record that proves
