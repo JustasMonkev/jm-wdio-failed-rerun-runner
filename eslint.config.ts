@@ -12,6 +12,7 @@ export default tseslint.config(
     {
         files: [
             'eslint.config.ts',
+            'vitest.config.ts',
             'src/**/*.ts',
             'tests/**/*.ts'
         ],

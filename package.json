@@ -9,8 +9,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/justaskietas/jm-wdio-failed-rerun-runner.git"
+    "url": "git+https://github.com/JustasMonkev/jm-wdio-failed-rerun-runner.git"
   },
+  "bugs": {
+    "url": "https://github.com/JustasMonkev/jm-wdio-failed-rerun-runner/issues"
+  },
+  "homepage": "https://github.com/JustasMonkev/jm-wdio-failed-rerun-runner#readme",
   "keywords": [
     "webdriver",
     "webdriverio",
@@ -45,11 +49,12 @@
     "lint": "eslint .",
     "prepack": "npm run build",
     "test": "npm run build && vitest run tests",
-    "coverage": "vitest run tests --coverage",
+    "coverage": "npm run build && vitest run tests --coverage",
     "typecheck": "tsc -p tsconfig.test.json --noEmit"
   },
   "files": [
     "build",
+    "src",
     "README.md",
     "LICENSE"
   ],
@@ -73,5 +78,6 @@
   },
   "overrides": {
     "esbuild": "^0.28.1"
-  }
+  },
+  "sideEffects": false
 }
