@@ -81,7 +81,8 @@ export const FAILED_RERUN_SERVICE_PATH = fileURLToPath(new URL('./index.js', imp
 const fileSystemManifestStore: FailedTestManifestStore = {
     reset: resetManifest,
     read: readFailedTests,
-    readAll: readManifest
+    readAll: readManifest,
+    append: appendFailedTest
 }
 
 const processRetryEnv: FailedRerunRetryEnv = {
@@ -427,7 +428,8 @@ async function readManifestFailures(settings: RerunSettings, manifestPath: strin
 // `--rerun-manifest-path` is documented as a build artifact, so the literal path the user
 // gave must end up holding every rerun failure, not just whichever group happened to run last.
 async function writeCombinedRerunManifest(settings: RerunSettings, attempts: FailedRerunAttemptResult[]) {
-    if (!settings.rerunManifestPath) {
+    const append = settings.manifests.append?.bind(settings.manifests)
+    if (!settings.rerunManifestPath || !append) {
         return
     }
 
@@ -440,7 +442,7 @@ async function writeCombinedRerunManifest(settings: RerunSettings, attempts: Fai
 
     await settings.manifests.reset(combinedPath)
     for (const failure of failures) {
-        await appendFailedTest(combinedPath, failure)
+        await append(combinedPath, failure)
     }
 }
 

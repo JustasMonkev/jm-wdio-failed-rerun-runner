@@ -79,6 +79,10 @@ export interface FailedTestsRerunnerDeps {
 export interface FailedTestManifestStore {
     reset(manifestPath: string): Promise<void>
     read(manifestPath: string): Promise<FailedTestRecord[]>
+    // Writes one record. Optional so existing custom stores keep compiling; a store that
+    // omits it simply does not get the combined rerun manifest, rather than having the
+    // runner write to the filesystem behind its back.
+    append?(manifestPath: string, record: FailedTestRecord): Promise<void>
     // Every record a rerun wrote, passed ones included, so the runner can prove which
     // targeted tests actually executed. Optional so existing custom stores keep compiling,
     // but a store that omits it CANNOT distinguish "the rerun passed" from "the rerun's

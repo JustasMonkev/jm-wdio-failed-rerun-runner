@@ -26,25 +26,31 @@ export function summarize(
     initialFailures: FailedTestRecord[],
     attempts: FailedRerunAttemptResult[]
 ): FailedRerunSummary {
-    const unresolved = new Map<string, FailedTestRecord>()
-    const notExecuted = new Map<string, FailedTestRecord>()
-    const targeted = new Set<string>()
+    // Rounds run in order, so the last attempt that targeted a test is the one that says
+    // how it ended. Accumulating instead would keep an early round's failure forever and
+    // report a test that later recovered as broken while the run exits 0.
+    const latest = new Map<string, 'failed' | 'passed' | 'notExecuted'>()
+    const notExecutedRecords = new Map<string, FailedTestRecord>()
 
     for (const attempt of attempts) {
         if (attempt.type !== 'rerun') {
             continue
         }
 
+        const failed = new Set(attempt.failures.map(getFailureKeyForSummary))
+        const missing = new Set(attempt.notExecuted.map(getFailureKeyForSummary))
+
         for (const record of attempt.targeted) {
-            targeted.add(getFailureKeyForSummary(record))
-        }
+            const key = getFailureKeyForSummary(record)
 
-        for (const record of attempt.failures) {
-            unresolved.set(getFailureKeyForSummary(record), record)
-        }
+            if (missing.has(key)) {
+                latest.set(key, 'notExecuted')
+                notExecutedRecords.set(key, record)
+                continue
+            }
 
-        for (const record of attempt.notExecuted) {
-            notExecuted.set(getFailureKeyForSummary(record), record)
+            notExecutedRecords.delete(key)
+            latest.set(key, failed.has(key) ? 'failed' : 'passed')
         }
     }
 
@@ -52,28 +58,24 @@ export function summarize(
     const broken: FailedTestRecord[] = []
 
     for (const record of initialFailures) {
-        const key = getFailureKeyForSummary(record)
-        if (notExecuted.has(key)) {
-            continue
-        }
-
         // A test no rerun ever targeted - `maxReruns: 0`, or a round that stopped early -
         // recovered from nothing, so it is neither flaky nor proven broken.
-        if (!targeted.has(key)) {
-            continue
-        }
-
-        if (unresolved.has(key)) {
-            broken.push(record)
-        } else {
-            flaky.push(record)
+        switch (latest.get(getFailureKeyForSummary(record))) {
+            case 'passed':
+                flaky.push(record)
+                break
+            case 'failed':
+                broken.push(record)
+                break
+            default:
+                break
         }
     }
 
     return {
         flaky,
         broken,
-        notExecuted: Array.from(notExecuted.values())
+        notExecuted: Array.from(notExecutedRecords.values())
     }
 }
 

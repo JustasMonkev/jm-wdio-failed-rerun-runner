@@ -59,19 +59,28 @@ function parseManifestLine(line: string) {
     }
 }
 
-// Last record wins: a test retried in-run can be written more than once, and the final
-// entry is the one that reflects how it actually ended. Insertion order is preserved so
-// the manifest still reads chronologically.
+// Last record wins WITHIN one execution: a test retried in-run is written more than once
+// and the final entry reflects how it actually ended. Executions are keyed by worker as
+// well as by title, because the same test runs once per capability in separate workers -
+// collapsing those together would let one browser's pass erase another browser's failure.
+// Insertion order is preserved so the manifest still reads chronologically.
 export function dedupeFailedTests(records: FailedTestRecord[]) {
-    const byKey = new Map<string, FailedTestRecord>()
+    const byIdentity = new Map<string, FailedTestRecord>()
 
     for (const record of records) {
-        byKey.set(getFailureKey(record), record)
+        byIdentity.set(getRecordIdentity(record), record)
     }
 
-    return Array.from(byKey.values())
+    return Array.from(byIdentity.values())
 }
 
+// Identifies one execution of a test. Used for deduplication only.
+export function getRecordIdentity(record: FailedTestRecord) {
+    return `${getFailureKey(record)}\0${record.cid ?? ''}`
+}
+
+// Identifies a test across attempts. Deliberately excludes the worker id: a rerun runs in
+// a fresh worker, so matching initial failures against rerun records must ignore it.
 export function getFailureKey(record: FailedTestRecord) {
     return `${record.framework}\0${record.spec}\0${record.fullTitle}`
 }

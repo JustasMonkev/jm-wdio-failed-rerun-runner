@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     indistinguishable from "everything passed", so a filter matching zero tests
     produced exit code `0`. Reruns now record executed tests, and a targeted test
     that never ran is a hard failure reported in `notExecuted`.
+- **One capability's pass erased another's failure.** The same spec and title run once
+  per capability in separate workers, and manifest deduplication collapsed them on
+  title alone, so a browser that passed could erase a browser that failed and the run
+  went green. Records are now keyed by worker as well, while matching a rerun to the
+  failure it targets still ignores the worker, since a rerun always runs in a fresh one.
+- **The summary accumulated every rerun failure instead of taking the last.** With
+  `maxReruns` above 1, a test that failed an early round and passed a later one was
+  reported as broken while the run exited 0.
+- **The combined rerun manifest bypassed a substituted manifest store**, writing to the
+  filesystem behind a custom adapter's back.
 - **The CLI exited 0 on every failing run.** WebdriverIO's launcher registers an
   `exit-hook` handler, and `exit-hook@4` replaces the exit path such that a process
   which only sets `process.exitCode` still exits `0`. Exiting explicitly is the only
