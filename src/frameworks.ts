@@ -100,7 +100,9 @@ export function createCucumberFailedScenarioRecord(
 // targeted test actually executed, and in any attempt it supersedes an earlier failure for
 // the same test - which is how a WebdriverIO spec-file retry retires the attempt it replaced.
 function passedOutcome(context: RecordContext) {
-    return context.outcome === 'passed' ? { outcome: 'passed' as const } : {}
+    return context.outcome === 'failed' || context.outcome === undefined
+        ? {}
+        : { outcome: context.outcome }
 }
 
 function getSpecFile(test: Frameworks.Test) {

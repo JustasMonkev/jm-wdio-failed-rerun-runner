@@ -3,7 +3,7 @@ import type { Services } from '@wdio/types'
 import type { FailedRerunLogger } from '#src/reporter'
 
 export type FailedRerunAttemptType = 'initial' | 'rerun'
-export type FailedRerunOutcome = 'failed' | 'passed'
+export type FailedRerunOutcome = 'failed' | 'passed' | 'skipped'
 export type FailedRerunFramework = 'mocha' | 'jasmine' | 'cucumber'
 export type FailedRerunJsonValue =
     | string

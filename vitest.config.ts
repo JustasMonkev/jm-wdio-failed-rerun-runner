@@ -13,14 +13,15 @@ export default defineConfig({
             // A ratchet just under the current numbers: it fails a regression without
             // failing an unrelated change that happens to shift a line.
             //
-            // Functions cannot reach 100 here: `exitWith` ends the process, so it can only
-            // be exercised from a spawned child, and v8 does not instrument those. It is
-            // covered by the subprocess tests in tests/realFrameworks.test.ts.
+            // Functions stay at 100. `exitWith` ends the process, so its end-to-end
+            // behaviour can only be proven from a spawned child, which v8 does not
+            // instrument; an in-process test pins its drain-then-exit ordering so the
+            // whole-file gate stays honest.
             thresholds: {
-                statements: 96,
-                branches: 89,
-                functions: 99,
-                lines: 96
+                statements: 97,
+                branches: 90,
+                functions: 100,
+                lines: 97
             }
         }
     }

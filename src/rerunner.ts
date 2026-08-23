@@ -10,6 +10,8 @@ import {
     countUnreadableLines,
     dedupeFailedTests,
     getExecutionKey,
+    isUnresolvedFailure,
+    provesExecution,
     readFailedTests,
     readManifest,
     resetManifest
@@ -319,7 +321,7 @@ async function runRerunPlan(
     // that supersedes an earlier failure. The built-in store already returns deduplicated
     // records, but `readAll` is documented as every record a rerun wrote, and a custom
     // adapter honouring that literally would otherwise keep a recovered test failing.
-    const failures = dedupeFailedTests(records).filter((record) => record.outcome !== 'passed')
+    const failures = dedupeFailedTests(records).filter(isUnresolvedFailure)
 
     const rerunAttempt = {
         exitCode,
@@ -530,7 +532,7 @@ async function readRerunRecords(settings: RerunSettings, manifestPath: string) {
 // from "everything passed". Treating that as success turns a red build green, so a test
 // the rerun never executed stays a failure.
 function findTestsThatDidNotRun(plan: RerunPlan, records: FailedTestRecord[]) {
-    const executed = new Set(records.map(getExecutionKey))
+    const executed = new Set(records.filter(provesExecution).map(getExecutionKey))
     return plan.tests.filter((test) => !executed.has(getExecutionKey(test)))
 }
 

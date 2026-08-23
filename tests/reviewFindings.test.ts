@@ -993,3 +993,137 @@ describe('a custom store returning raw records is handled', () => {
         expect(result.summary.broken).toEqual([])
     })
 })
+
+describe('a skipped test retires an earlier failure without proving execution', () => {
+    it('lets a skip in the final spec-file retry supersede the failure it replaced', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'manifest.ndjson')
+        const previous = process.env.WDIO_WORKER_ID
+        const test = {
+            title: 'signs in',
+            fullTitle: 'login signs in',
+            file: 'specs/login.e2e.ts'
+        }
+        const result = { duration: 1, passed: false, retries: { attempts: 0, limit: 0 } }
+
+        try {
+            // `specFileRetries` reruns the spec in a fresh worker. The first worker fails the
+            // test; the retry skips it - a conditional `this.skip()`, or a filter that now
+            // excludes it. The skip is the last word on the test, so the failure is retired.
+            process.env.WDIO_WORKER_ID = '0-0'
+            await new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+                .afterTest(test as never, {}, result as never)
+
+            process.env.WDIO_WORKER_ID = '0-1'
+            await new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+                .afterTest({ ...test, pending: true } as never, {}, result as never)
+        } finally {
+            process.env.WDIO_WORKER_ID = previous
+        }
+
+        expect(await readFailedTests(manifestPath)).toEqual([])
+    })
+
+    it('lets a skipped scenario in the final spec-file retry supersede the failure it replaced', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'manifest.ndjson')
+        const previous = process.env.WDIO_WORKER_ID
+        const feature = path.join(workspace, 'login.feature')
+
+        try {
+            process.env.WDIO_WORKER_ID = '0-0'
+            await new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+                .afterScenario(
+                    { pickle: { name: 'signs in', uri: feature }, result: { status: 'FAILED' } } as never,
+                    { passed: false, duration: 1, error: 'nope' } as never,
+                    {}
+                )
+
+            // The spec-file retry ran the feature again and the scenario was skipped. The
+            // skip is the last word on it, so the earlier worker's failure is retired.
+            process.env.WDIO_WORKER_ID = '0-1'
+            await new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+                .afterScenario(
+                    { pickle: { name: 'signs in', uri: feature }, result: { status: 'SKIPPED' } } as never,
+                    { passed: true, duration: 0 } as never,
+                    {}
+                )
+        } finally {
+            process.env.WDIO_WORKER_ID = previous
+        }
+
+        expect(await readFailedTests(manifestPath)).toEqual([])
+    })
+
+    it('refuses to call a rerun a recovery when it skipped the test it targeted', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'login.e2e.ts')
+        const test = { title: 'signs in', fullTitle: 'login signs in', file: spec }
+        const result = { duration: 1, passed: false, retries: { attempts: 0, limit: 0 } }
+        let runs = 0
+
+        const rerun = await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace,
+            quiet: true,
+            run: async (_config, args) => {
+                runs++
+                const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
+
+                if (runs === 1) {
+                    await service.afterTest(test as never, {}, result as never)
+                    return 1
+                }
+
+                // The rerun skipped the very test it was launched to retry. Nothing was
+                // proven about it, so it must not be reported as flaky.
+                await service.afterTest({ ...test, pending: true } as never, {}, result as never)
+                return 0
+            }
+        })
+
+        expect(rerun.exitCode).toBe(1)
+        expect(rerun.summary.flaky).toEqual([])
+        // A skip proves nothing either way, so it is reported as no result - never also as
+        // still failing, which would contradict it in the same summary.
+        expect(rerun.summary.broken).toEqual([])
+        expect(rerun.summary.notExecuted.map((record) => record.fullTitle)).toEqual(['login signs in'])
+    })
+
+    it('refuses to call a cucumber rerun a recovery when the scenario was skipped', async () => {
+        const workspace = await makeTempDir()
+        const feature = path.join(workspace, 'login.feature')
+        let runs = 0
+
+        const rerun = await runFailedTestsRerun(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace,
+            quiet: true,
+            run: async (_config, args) => {
+                runs++
+                const service = new FailedTestRerunService(getServiceOptions(args), {}, {} as WebdriverIO.Config)
+
+                if (runs === 1) {
+                    await service.afterScenario(
+                        { pickle: { name: 'signs in', uri: feature }, result: { status: 'FAILED' } } as never,
+                        { passed: false, duration: 1, error: 'nope' } as never,
+                        {}
+                    )
+                    return 1
+                }
+
+                // `@wdio/cucumber-framework` reports a SKIPPED scenario as `passed: true`.
+                // Taking that at face value would turn a genuinely failing build green.
+                await service.afterScenario(
+                    { pickle: { name: 'signs in', uri: feature }, result: { status: 'SKIPPED' } } as never,
+                    { passed: true, duration: 0 } as never,
+                    {}
+                )
+                return 0
+            }
+        })
+
+        expect(rerun.exitCode).toBe(1)
+        expect(rerun.summary.flaky).toEqual([])
+        expect(rerun.summary.broken).toEqual([])
+        expect(rerun.summary.notExecuted.map((record) => record.fullTitle)).toEqual(['signs in'])
+    })
+})

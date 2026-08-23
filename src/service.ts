@@ -28,15 +28,13 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
         this.config = config
     }
 
+    // A skipped test reaches this hook as `passed: false`, and recording that as a failure
+    // would queue a test that can never pass. It is recorded as a skip instead of dropped:
+    // dropping it leaves an earlier failure for the same test standing as the manifest's
+    // last word, so a `specFileRetries` attempt that ends in a skip could never retire the
+    // failure it replaced. A skip still proves nothing about the test, so it never counts
+    // as evidence that a focused rerun executed what it targeted.
     async afterTest(test: Frameworks.Test, context: unknown, result: Frameworks.TestResult) {
-        // A skipped test reaches this hook as `passed: false`. Recording it would queue a
-        // test that can never pass, so the rerun could never resolve it and the run could
-        // never go green. It is also not evidence that a targeted test executed, so skip
-        // it on reruns too.
-        if (isSkipped(test, result)) {
-            return
-        }
-
         // A passing test is never retried, so the retry guard must not apply to it.
         if (!result.passed && willBeRetriedByWdio(test, result)) {
             return
@@ -45,20 +43,15 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
         await this.#appendRecord(createMochaFailedTestRecord(
             test,
             result,
-            this.#recordContext(result.passed),
+            this.#recordContext(result.passed, isSkipped(test, result)),
             context
         ))
     }
 
+    // `@wdio/cucumber-framework` reports a SKIPPED scenario as `passed: true`. Taking that
+    // at face value would let a rerun whose scenario was skipped - by a tag filter, or a
+    // Before hook that skips - be reported as a recovery, turning a failing build green.
     async afterScenario(world: Frameworks.World, result: Frameworks.PickleResult, _context: unknown) {
-        // `@wdio/cucumber-framework` reports a SKIPPED scenario as `passed: true`. Counting
-        // that as evidence the scenario ran would let a rerun whose scenario was skipped -
-        // by a tag filter, or a Before hook that skips - be reported as a recovery, turning
-        // a genuinely failing build green.
-        if (isSkippedScenario(world)) {
-            return
-        }
-
         if (!result.passed && willBeRetriedByWdioScenario(world)) {
             return
         }
@@ -66,16 +59,16 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
         await this.#appendRecord(createCucumberFailedScenarioRecord(
             world,
             result,
-            this.#recordContext(result.passed)
+            this.#recordContext(result.passed, isSkippedScenario(world))
         ))
     }
 
-    #recordContext(passed?: boolean) {
+    #recordContext(passed?: boolean, skipped?: boolean) {
         return {
             attempt: this.options.attempt || 'initial',
             cid: process.env.WDIO_WORKER_ID,
             framework: this.#framework(),
-            outcome: passed ? 'passed' as const : 'failed' as const
+            outcome: skipped ? 'skipped' as const : (passed ? 'passed' as const : 'failed' as const)
         }
     }
 

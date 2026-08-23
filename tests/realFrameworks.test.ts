@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import Mocha from 'mocha'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import FailedTestRerunService, { flushStream } from '#src/index'
+import FailedTestRerunService, { exitWith, flushStream } from '#src/index'
 import { readFailedTests } from '#src/manifest'
 
 const tempDirs: string[] = []
@@ -208,6 +208,46 @@ describe('exit code survives WebdriverIO exit hooks', () => {
 
     it('still reports success when the run passed', async () => {
         expect(await runNode(path.join(fixtures, 'exitWithHook.mjs'), ['0'])).toBe(0)
+    })
+
+    it('drains both streams before exiting, and sets the exit code either way', async () => {
+        // The subprocess tests above prove the end-to-end behaviour but run outside this
+        // process, so they cannot observe the ordering that makes it work. Draining after
+        // `process.exit` would be useless, so pin the sequence: exit code set, both streams
+        // drained, and only then the exit.
+        const order: string[] = []
+        const previousExitCode = process.exitCode
+        const exit = process.exit
+        const stdoutWrite = process.stdout.write
+        const stderrWrite = process.stderr.write
+
+        try {
+            for (const [name, stream] of [['stdout', process.stdout], ['stderr', process.stderr]] as const) {
+                Object.defineProperty(stream, 'writableLength', { configurable: true, value: 1 })
+                stream.write = ((_chunk: unknown, callback: () => void) => {
+                    order.push(`drained ${name}`)
+                    callback()
+                    return true
+                }) as typeof stream.write
+            }
+
+            process.exit = ((code?: number) => {
+                order.push(`exit ${code}`)
+                throw new Error('exited')
+            }) as typeof process.exit
+
+            await expect(exitWith(3)).rejects.toThrow('exited')
+            expect(process.exitCode).toBe(3)
+        } finally {
+            process.exit = exit
+            process.stdout.write = stdoutWrite
+            process.stderr.write = stderrWrite
+            delete (process.stdout as { writableLength?: number }).writableLength
+            delete (process.stderr as { writableLength?: number }).writableLength
+            process.exitCode = previousExitCode
+        }
+
+        expect(order).toEqual(['drained stdout', 'drained stderr', 'exit 3'])
     })
 
     it('does not truncate piped output on the way out', async () => {

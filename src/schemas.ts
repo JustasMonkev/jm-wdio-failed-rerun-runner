@@ -9,7 +9,7 @@ import type {
 
 export const failedRerunAttemptTypeSchema = z.enum(['initial', 'rerun'])
 export const failedRerunFrameworkSchema = z.enum(['mocha', 'jasmine', 'cucumber'])
-export const failedRerunOutcomeSchema = z.enum(['failed', 'passed'])
+export const failedRerunOutcomeSchema = z.enum(['failed', 'passed', 'skipped'])
 
 export const failedRerunJsonValueSchema: z.ZodType<FailedRerunJsonValue> = z.lazy(() => z.union([
     z.string(),

@@ -27,7 +27,19 @@ export async function readManifest(manifestPath: string): Promise<FailedTestReco
 }
 
 export async function readFailedTests(manifestPath: string): Promise<FailedTestRecord[]> {
-    return (await readManifest(manifestPath)).filter((record) => record.outcome !== 'passed')
+    return (await readManifest(manifestPath)).filter(isUnresolvedFailure)
+}
+
+// Only a recorded failure keeps a test queued. A pass or a skip retires it: both mean the
+// last thing that happened to this test under this capability was not a failure.
+export function isUnresolvedFailure(record: FailedTestRecord) {
+    return record.outcome !== 'passed' && record.outcome !== 'skipped'
+}
+
+// A skipped test did not run, so it can never stand as proof that a focused rerun executed
+// what it targeted.
+export function provesExecution(record: FailedTestRecord) {
+    return record.outcome !== 'skipped'
 }
 
 // Skipping an unreadable line keeps one bad write from destroying the whole run, but the
