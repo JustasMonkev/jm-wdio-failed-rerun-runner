@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import run, { CliUsageError, parseCliArgs } from '#src/run'
 
@@ -61,19 +61,27 @@ describe('CLI argument parsing', () => {
 })
 
 describe('CLI entry point', () => {
-    const previousUnitTests = process.env.WDIO_UNIT_TESTS
-
-    beforeEach(() => {
-        process.env.WDIO_UNIT_TESTS = '1'
+    afterEach(() => {
+        vi.restoreAllMocks()
     })
 
-    afterEach(() => {
-        if (previousUnitTests === undefined) {
-            delete process.env.WDIO_UNIT_TESTS
-        } else {
-            process.env.WDIO_UNIT_TESTS = previousUnitTests
+    it('returns a failing code regardless of WDIO_UNIT_TESTS', async () => {
+        // WDIO_UNIT_TESTS belongs to @wdio/cli, not to this package. Keying exit-code
+        // behaviour off it meant anyone who had it exported got a CLI that reported
+        // success on failure.
+        const previous = process.env.WDIO_UNIT_TESTS
+        process.env.WDIO_UNIT_TESTS = '1'
+        vi.spyOn(console, 'error').mockImplementation(() => {})
+
+        try {
+            await expect(run([])).resolves.toBe(1)
+        } finally {
+            if (previous === undefined) {
+                delete process.env.WDIO_UNIT_TESTS
+            } else {
+                process.env.WDIO_UNIT_TESTS = previous
+            }
         }
-        vi.restoreAllMocks()
     })
 
     it('prints usage and succeeds for --help', async () => {

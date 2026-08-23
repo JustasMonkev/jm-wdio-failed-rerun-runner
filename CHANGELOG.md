@@ -35,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hook parameter, not under `result` where `@wdio/types` declares it.
 - Manifest dedupe kept the first record for a test, so a later `passed` entry could
   not supersede an earlier failure from an in-run retry. The last record now wins.
+- **The CLI could report success on failure.** Exit-code handling was keyed off
+  `WDIO_UNIT_TESTS`, which is `@wdio/cli`'s own variable, not this package's. With it
+  exported, `process.exit` was skipped and `cli.ts` discarded `run()`'s return value,
+  so a failing run exited `0`. `run()` now simply returns the code and `cli.ts` sets
+  `process.exitCode`, which also stops truncating the summary the reporter just printed.
 - `npm run typecheck` failed on a clean checkout, and the CI workflow ran it before
   building; `#src/*` resolves to `build/*.d.ts`, so a `pretypecheck` build was needed.
 - `serializeError` reported a shared non-cyclic object as `[Circular]` the second

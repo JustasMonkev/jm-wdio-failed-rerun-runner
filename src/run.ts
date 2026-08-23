@@ -52,24 +52,18 @@ export class CliUsageError extends Error {
     }
 }
 
-export default async function run(argv = process.argv.slice(2)) {
+export default async function run(argv = process.argv.slice(2)): Promise<number> {
     let parsedArgs: ParsedCliArgs
     try {
         parsedArgs = parseCliArgs(argv)
     } catch (error) {
         console.error((error as Error).message)
         printUsage(console.error)
-        if (!process.env.WDIO_UNIT_TESTS) {
-            process.exit(1)
-        }
         return 1
     }
 
     if (parsedArgs.help) {
         printUsage(console.log)
-        if (!process.env.WDIO_UNIT_TESTS) {
-            process.exit(0)
-        }
         return 0
     }
 
@@ -78,15 +72,9 @@ export default async function run(argv = process.argv.slice(2)) {
             path.resolve(process.cwd(), parsedArgs.configPath!),
             parsedArgs.options
         )
-        if (!process.env.WDIO_UNIT_TESTS) {
-            process.exit(result.exitCode)
-        }
         return result.exitCode
     } catch (error) {
         console.error(error instanceof FailedRerunUsageError ? error.message : error)
-        if (!process.env.WDIO_UNIT_TESTS) {
-            process.exit(1)
-        }
         return 1
     }
 }
