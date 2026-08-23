@@ -842,6 +842,38 @@ describe('internally generated manifests do not accumulate', () => {
         }
     })
 
+    it('does not fail the run when cleanup itself fails', async () => {
+        const workspace = await makeTempDir()
+        const records = new Map<string, FailedTestRecord[]>()
+        let resets = 0
+
+        const rerunner = createFailedTestsRerunner({
+            manifests: {
+                async reset(manifestPath) {
+                    resets++
+                    // A read-only temp directory, a removed mount: tidying up is not worth
+                    // turning a completed run into a failure.
+                    if (resets > 1) {
+                        throw new Error('EROFS: read-only file system')
+                    }
+                    records.set(manifestPath, [])
+                },
+                async read(manifestPath) {
+                    return records.get(manifestPath) ?? []
+                }
+            },
+            run: async () => 0
+        })
+
+        const result = await rerunner.run(path.join(workspace, 'wdio.conf.ts'), {
+            cwd: workspace,
+            quiet: true
+        })
+
+        expect(result.exitCode).toBe(0)
+        expect(resets).toBeGreaterThan(1)
+    })
+
     it('still cleans up when the run throws after writing', async () => {
         const workspace = await makeTempDir()
         const spec = path.join(workspace, 'a.e2e.ts')
