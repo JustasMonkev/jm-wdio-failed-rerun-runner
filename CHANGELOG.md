@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     indistinguishable from "everything passed", so a filter matching zero tests
     produced exit code `0`. Reruns now record executed tests, and a targeted test
     that never ran is a hard failure reported in `notExecuted`.
+- **A pending test could be queued for rerun forever.** WebdriverIO decides its `skipped`
+  marker by string-matching the error a framework throws to signal a skip; when that
+  misses, only the framework's own `pending` flag identifies the skip, and without it the
+  test was recorded as a failure that no rerun could ever resolve. Both signals are now
+  consulted.
+- **A custom `readAll` returning raw records kept a stale failure.** Passes were filtered
+  out before deduplication, discarding the very record that supersedes an earlier failure.
+  The built-in store hid this by deduplicating first; `readAll` is documented as every
+  record a rerun wrote, so an adapter honouring that literally kept a recovered test
+  failing. Deduplication now runs before the filter.
 - **Internally generated manifests were never cleaned up.** With no `manifestPath` given,
   each run invents temp files and left them behind; now that every completed test is
   recorded, a green run of a large suite dropped a full-suite NDJSON file into the temp

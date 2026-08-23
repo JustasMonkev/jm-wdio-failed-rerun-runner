@@ -907,3 +907,89 @@ describe('internally generated manifests do not accumulate', () => {
         await expect(fs.access(seen[0])).rejects.toThrow()
     })
 })
+
+describe('a pending test is never queued for rerun', () => {
+    it('recognises Mocha\'s pending flag when WebdriverIO\'s skip marker is absent', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'failures.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+
+        // WebdriverIO decides `skipped` by string-matching the error a framework throws to
+        // signal a skip. When that misses, the framework's own `pending` flag on the test
+        // is the only signal left, and without it the test is queued for a rerun it can
+        // never pass, so the run can never go green.
+        await service.afterTest({
+            title: 'skipped at runtime',
+            fullTitle: 'suite skipped at runtime',
+            file: 'specs/a.e2e.js',
+            pending: true
+        } as never, {}, {
+            passed: false,
+            duration: 1,
+            retries: { attempts: 0, limit: 0 }
+        } as never)
+
+        expect(await readFailedTests(manifestPath)).toEqual([])
+    })
+
+    it('still records an ordinary failure', async () => {
+        const workspace = await makeTempDir()
+        const manifestPath = path.join(workspace, 'failures.ndjson')
+        const service = new FailedTestRerunService({ manifestPath }, {}, {} as WebdriverIO.Config)
+
+        await service.afterTest({
+            title: 'real failure',
+            fullTitle: 'suite real failure',
+            file: 'specs/a.e2e.js',
+            pending: false
+        } as never, {}, {
+            passed: false,
+            duration: 1,
+            retries: { attempts: 0, limit: 0 }
+        } as never)
+
+        expect((await readFailedTests(manifestPath)).map((record) => record.fullTitle))
+            .toEqual(['suite real failure'])
+    })
+})
+
+describe('a custom store returning raw records is handled', () => {
+    it('lets a later pass supersede an earlier failure from an undeduplicated readAll', async () => {
+        const workspace = await makeTempDir()
+        const spec = path.join(workspace, 'a.e2e.ts')
+        const failure: FailedTestRecord = {
+            attempt: 'initial',
+            framework: 'mocha',
+            spec,
+            fullTitle: 'suite t',
+            cid: '0-0'
+        }
+        // `readAll` is documented as every record a rerun wrote. A custom adapter honouring
+        // that literally returns both the failed spec-file attempt and the passing retry.
+        const raw: FailedTestRecord[] = [
+            { ...failure, attempt: 'rerun' },
+            { ...failure, attempt: 'rerun', cid: '0-1', outcome: 'passed' }
+        ]
+        let runs = 0
+
+        const result = await createFailedTestsRerunner({
+            manifests: {
+                async reset() {},
+                async read() {
+                    return runs <= 1 ? [failure] : raw.filter((record) => record.outcome !== 'passed')
+                },
+                async readAll() {
+                    return raw
+                }
+            },
+            run: async () => {
+                runs++
+                return runs === 1 ? 1 : 0
+            }
+        }).run(path.join(workspace, 'wdio.conf.ts'), { cwd: workspace, quiet: true })
+
+        expect(result.exitCode).toBe(0)
+        expect(result.summary.flaky.map((test) => test.fullTitle)).toEqual(['suite t'])
+        expect(result.summary.broken).toEqual([])
+    })
+})

@@ -29,11 +29,11 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
     }
 
     async afterTest(test: Frameworks.Test, context: unknown, result: Frameworks.TestResult) {
-        // A skipped test reaches this hook as `passed: false` with `skipped: true`.
-        // Recording it would queue a test that can never pass, so the rerun could never
-        // resolve it and the run could never go green. It is also not evidence that a
-        // targeted test executed, so skip it on reruns too.
-        if (isSkipped(result)) {
+        // A skipped test reaches this hook as `passed: false`. Recording it would queue a
+        // test that can never pass, so the rerun could never resolve it and the run could
+        // never go green. It is also not evidence that a targeted test executed, so skip
+        // it on reruns too.
+        if (isSkipped(test, result)) {
             return
         }
 
@@ -93,8 +93,12 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
     }
 }
 
-function isSkipped(result: Frameworks.TestResult) {
-    return Boolean((result as { skipped?: boolean }).skipped)
+// WebdriverIO derives `skipped` by string-matching the error a framework throws to signal
+// a skip, which can miss. Mocha and Jasmine also mark the test itself as pending, and that
+// flag comes from the framework rather than from a message match, so consult both.
+function isSkipped(test: Frameworks.Test, result: Frameworks.TestResult) {
+    const { pending } = test as { pending?: boolean }
+    return Boolean(pending) || Boolean((result as { skipped?: boolean }).skipped)
 }
 
 function isSkippedScenario(world: Frameworks.World) {

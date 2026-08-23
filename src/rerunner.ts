@@ -315,7 +315,11 @@ async function runRerunPlan(
     await countUnreadable(settings, manifestPath)
     const { records, canVerifyExecution } = await readRerunRecords(settings, manifestPath)
     const notExecuted = canVerifyExecution ? findTestsThatDidNotRun(plan, records) : []
-    const failures = dedupeFailedTests(records.filter((record) => record.outcome !== 'passed'))
+    // Deduplicate first: filtering passes out beforehand would discard the very record
+    // that supersedes an earlier failure. The built-in store already returns deduplicated
+    // records, but `readAll` is documented as every record a rerun wrote, and a custom
+    // adapter honouring that literally would otherwise keep a recovered test failing.
+    const failures = dedupeFailedTests(records).filter((record) => record.outcome !== 'passed')
 
     const rerunAttempt = {
         exitCode,
