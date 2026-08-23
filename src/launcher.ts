@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { pathToFileURL } from 'node:url'
 import fs from 'node:fs/promises'
 
 import * as z from 'zod'
@@ -90,7 +91,12 @@ async function createConfigWithExtraServices(configPath: string, services: NonNu
     const wrapperPath = path.join(configDirectory, `.wdio-failed-rerun-${randomUUID()}${wrapperExtension}`)
     const serializedServices = JSON.stringify(assertJsonSerializable(services), null, 4)
 
-    await fs.writeFile(wrapperPath, `const baseModule = await import(${JSON.stringify(`./${path.basename(configPath)}`)})
+    // A relative specifier is resolved as a URL, not as a filesystem path, so a config whose
+    // name contains `#`, `?` or `%` imports the wrong thing: the first two truncate at the
+    // fragment or query, and `%20` percent-decodes to a different filename. Service
+    // injection sends every normal run through this wrapper, so that would fail a config
+    // WebdriverIO itself would have loaded. A file URL carries the literal path through.
+    await fs.writeFile(wrapperPath, `const baseModule = await import(${JSON.stringify(pathToFileURL(configPath).href)})
 const baseConfig = baseModule.config || baseModule.default?.config || baseModule.default || {}
 const extraServices = ${serializedServices}
 
