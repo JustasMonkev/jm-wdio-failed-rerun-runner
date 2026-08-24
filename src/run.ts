@@ -2,24 +2,33 @@ import path from 'node:path'
 
 import * as z from 'zod'
 
-import { runFailedTestsRerun } from '#src/rerunner'
+import { FailedRerunUsageError } from '#src/errors'
+import { MAX_RERUNS_LIMIT, runFailedTestsRerun } from '#src/rerunner'
 
 const nonNegativeIntegerStringSchema = z.string().transform((value, context) => {
-    const maxReruns = Number(value)
-
-    if (!Number.isInteger(maxReruns) || maxReruns < 0) {
-        context.issues.push({
-            code: 'custom',
-            input: value,
-            message: '--max-reruns must be a non-negative integer'
-        })
+    const fail = (message: string) => {
+        context.issues.push({ code: 'custom', input: value, message })
         return z.NEVER
+    }
+
+    // Parse strictly: `Number()` would silently accept '1e3', '0x10', '+5' and ' 5'.
+    if (!/^\d+$/.test(value)) {
+        return fail('--max-reruns must be a non-negative integer')
+    }
+
+    const maxReruns = Number(value)
+    if (!Number.isSafeInteger(maxReruns) || maxReruns > MAX_RERUNS_LIMIT) {
+        return fail(`--max-reruns must be between 0 and ${MAX_RERUNS_LIMIT}`)
     }
 
     return maxReruns
 })
 
-const cliFlagValueSchema = z.string().min(1).refine((value) => !value.startsWith('-'))
+// A leading '-' normally means the next flag, i.e. a missing value. A negative number is
+// the exception: treat it as a value so it reaches the validator and gets an error that
+// names the real problem instead of "Missing value".
+const cliFlagValueSchema = z.string().min(1)
+    .refine((value) => !value.startsWith('-') || /^-\d+$/.test(value))
 
 const parsedCliArgsSchema = z.object({
     configPath: z.string().optional(),
@@ -28,6 +37,7 @@ const parsedCliArgsSchema = z.object({
         manifestPath: z.string().optional(),
         maxReruns: nonNegativeIntegerStringSchema.optional(),
         passOnSuccessfulRerun: z.boolean().optional(),
+        quiet: z.boolean().optional(),
         rerunManifestPath: z.string().optional()
     })
 }).superRefine((value, context) => {
@@ -43,6 +53,29 @@ const parsedCliArgsSchema = z.object({
 type ParsedCliArgs = z.output<typeof parsedCliArgsSchema>
 type ParsedCliArgsInput = z.input<typeof parsedCliArgsSchema>
 
+// WebdriverIO's launcher registers an `async-exit-hook` handler, which replaces the
+// process exit path in a way that discards `process.exitCode`: a process that only sets it
+// still exits 0, so every failing run would report success. Exiting explicitly is the only
+// reliable way to signal failure, but `process.exit` truncates pending asynchronous writes
+// to a pipe, which would swallow the summary the reporter just printed. Drain first, then
+// exit.
+export async function exitWith(exitCode: number) {
+    process.exitCode = exitCode
+    await Promise.all([flushStream(process.stdout), flushStream(process.stderr)])
+    process.exit(exitCode)
+}
+
+export function flushStream(stream: NodeJS.WriteStream) {
+    return new Promise<void>((resolve) => {
+        if (stream.writableLength === 0) {
+            resolve()
+            return
+        }
+
+        stream.write('', () => resolve())
+    })
+}
+
 export class CliUsageError extends Error {
     constructor(message: string) {
         super(message)
@@ -50,24 +83,18 @@ export class CliUsageError extends Error {
     }
 }
 
-export default async function run(argv = process.argv.slice(2)) {
+export default async function run(argv = process.argv.slice(2)): Promise<number> {
     let parsedArgs: ParsedCliArgs
     try {
         parsedArgs = parseCliArgs(argv)
     } catch (error) {
         console.error((error as Error).message)
         printUsage(console.error)
-        if (!process.env.WDIO_UNIT_TESTS) {
-            process.exit(1)
-        }
         return 1
     }
 
     if (parsedArgs.help) {
         printUsage(console.log)
-        if (!process.env.WDIO_UNIT_TESTS) {
-            process.exit(0)
-        }
         return 0
     }
 
@@ -76,15 +103,9 @@ export default async function run(argv = process.argv.slice(2)) {
             path.resolve(process.cwd(), parsedArgs.configPath!),
             parsedArgs.options
         )
-        if (!process.env.WDIO_UNIT_TESTS) {
-            process.exit(result.exitCode)
-        }
         return result.exitCode
     } catch (error) {
-        console.error(error)
-        if (!process.env.WDIO_UNIT_TESTS) {
-            process.exit(1)
-        }
+        console.error(error instanceof FailedRerunUsageError ? error.message : error)
         return 1
     }
 }
@@ -102,6 +123,11 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
         if (arg === '--help' || arg === '-h') {
             parsed.help = true
             break
+        }
+
+        if (arg === '--quiet' || arg === '-q') {
+            parsed.options.quiet = true
+            continue
         }
 
         if (arg === '--pass-on-successful-rerun') {
@@ -191,5 +217,6 @@ Options:
   --rerun-manifest-path <path>      Path for rerun failure manifests.
   --pass-on-successful-rerun        Return 0 when focused reruns pass. This is the default.
   --no-pass-on-successful-rerun     Keep the initial failing exit code after successful reruns.
+  -q, --quiet                       Suppress rerun progress and the final summary.
   -h, --help                        Show this help message.`)
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildExactTitleGrep, buildExactTitleRegExps, createRerunPlans, createRerunSpecPlans } from '#src/planner'
+import { buildExactTitleFilters, buildExactTitleGrep, createRerunPlans, createRerunSpecPlans } from '#src/planner'
 import type { FailedRerunFramework, FailedTestRecord } from '#src/types'
 
 function failedTest(
@@ -25,15 +25,23 @@ describe('planner', () => {
         ])).toBe('^(?:cart total is \\$12\\.00\\?|checkout accepts card \\(visa\\))$')
     })
 
-    it('builds exact regular expressions for framework filters that accept RegExp arrays', () => {
-        expect(buildExactTitleRegExps([
+    it('builds exact anchored string filters for frameworks that accept title lists', () => {
+        expect(buildExactTitleFilters([
             'checkout accepts card (visa)',
             'cart total is $12.00?',
             'checkout accepts card (visa)'
-        ]).map(String)).toEqual([
-            '/^cart total is \\$12\\.00\\?$/',
-            '/^checkout accepts card \\(visa\\)$/'
+        ])).toEqual([
+            '^cart total is \\$12\\.00\\?$',
+            '^checkout accepts card \\(visa\\)$'
         ])
+    })
+
+    it('keeps title filters intact across the launcher-to-worker process boundary', () => {
+        // WebdriverIO forwards launcher args to workers with `childProcess.send()`, which
+        // uses JSON serialization: a RegExp would arrive as `{}` and match no scenarios.
+        const filters = buildExactTitleFilters(['checkout accepts card (visa)'])
+
+        expect(JSON.parse(JSON.stringify(filters))).toEqual(filters)
     })
 
     it('groups failed tests by framework and spec so exact-title filters stay scoped to one file', () => {

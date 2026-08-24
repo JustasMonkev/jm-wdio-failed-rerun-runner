@@ -4,12 +4,17 @@ import * as z from 'zod'
 import { serializeError } from '#src/errors'
 import type {
     FailedRerunAttemptType,
+    FailedRerunFramework,
+    FailedRerunOutcome,
     FailedTestRecord
 } from '#src/types'
 
 interface RecordContext {
     attempt: FailedRerunAttemptType
     cid?: string
+    capabilityFingerprint?: string
+    framework?: FailedRerunFramework
+    outcome?: FailedRerunOutcome
 }
 
 type FullTitle = string | (() => string)
@@ -36,15 +41,23 @@ const cucumberScenarioWorldSchema: z.ZodType<CucumberScenarioWorld> = z.object({
         uri: z.string().optional()
     }).optional(),
     uri: z.string().optional()
-}).passthrough()
+})
+// Deliberately not `.passthrough()`: nothing here reads beyond the declared keys, and
+// passing unknown ones through means enumerating every own key of a framework-supplied
+// object. An accessor throwing on a key this code never wanted would otherwise cost the
+// failure record.
 
 export function createMochaFailedTestRecord(
     test: Frameworks.Test,
     result: Frameworks.TestResult,
-    context: RecordContext
+    context: RecordContext,
+    testContext?: unknown
 ): FailedTestRecord | undefined {
+    const framework = context.framework === 'jasmine' ? 'jasmine' : 'mocha'
     const spec = getSpecFile(test)
-    const fullTitle = getMochaFullTitle(test)
+    const fullTitle = framework === 'jasmine'
+        ? getJasmineFullTitle(test)
+        : getMochaFullTitle(test, testContext)
 
     if (!spec || !fullTitle) {
         return undefined
@@ -52,12 +65,15 @@ export function createMochaFailedTestRecord(
 
     return {
         attempt: context.attempt,
-        framework: 'mocha',
+        framework,
         spec,
         fullTitle,
-        title: test.title,
+        title: parseNonEmptyString(readProperty(test, 'title'))
+            ?? parseNonEmptyString(readProperty(test, 'description')),
         cid: context.cid,
-        error: serializeError(result.error)
+        capabilityFingerprint: context.capabilityFingerprint,
+        ...passedOutcome(context),
+        error: serializeError(readProperty(result, 'error'))
     }
 }
 
@@ -80,28 +96,101 @@ export function createCucumberFailedScenarioRecord(
         fullTitle: scenarioName,
         title: scenarioName,
         cid: context.cid,
-        error: serializeError(result.error)
+        capabilityFingerprint: context.capabilityFingerprint,
+        ...passedOutcome(context),
+        error: serializeError(readProperty(result, 'error'))
     }
 }
 
-function getSpecFile(test: Frameworks.Test) {
-    return parseNonEmptyString(test.file)
+// A failure record carries no `outcome`, which keeps the manifest format unchanged for the
+// records that existed before outcomes were tracked. A `passed` record is written for every
+// test that completes, and does two jobs: during a focused rerun it is the evidence that a
+// targeted test actually executed, and in any attempt it supersedes an earlier failure for
+// the same test - which is how a WebdriverIO spec-file retry retires the attempt it replaced.
+function passedOutcome(context: RecordContext) {
+    return context.outcome === 'failed' || context.outcome === undefined
+        ? {}
+        : { outcome: context.outcome }
 }
 
-function getMochaFullTitle(test: Frameworks.Test) {
-    const fullTitle = readProperty(test, 'fullTitle') as FullTitle | undefined
-    const stringTitle = parseNonEmptyString(fullTitle)
+function getSpecFile(test: Frameworks.Test) {
+    return parseNonEmptyString(readProperty(test, 'file'))
+}
 
+// `@wdio/jasmine-framework` hands `afterTest` a spread of Jasmine's own spec result,
+// which carries `fullName` (what `jasmineOpts.grep` is matched against) and `description`
+// rather than Mocha's `fullTitle`/`title`.
+function getJasmineFullTitle(test: Frameworks.Test) {
+    return parseNonEmptyString(readProperty(test, 'fullName'))
+        || parseNonEmptyString(readProperty(test, 'fullTitle'))
+}
+
+function getMochaFullTitle(test: Frameworks.Test, testContext?: unknown) {
+    const fromTest = resolveFullTitleFrom(test)
+    if (fromTest) {
+        return fromTest
+    }
+
+    // `@wdio/mocha-framework` builds the `afterTest` argument as
+    // `{ ...context.test, parent: context.test?.parent?.title }`. That spread copies
+    // only own enumerable properties, and Mocha's `fullTitle` is a prototype method,
+    // so it never survives; `parent` is reduced to the immediate parent's title.
+    // Rebuilding the title from `parent + title` therefore DROPS every outer
+    // `describe`, and the resulting `mochaOpts.grep` cannot match the title Mocha
+    // actually greps against. The live context still holds the real Runnable, whose
+    // `fullTitle()` is exactly what Mocha filters on.
+    const fromContext = resolveContextFullTitle(testContext)
+    if (fromContext) {
+        return fromContext
+    }
+
+    const parent = parseNonEmptyString(readProperty(test, 'parent'))
+    const title = parseNonEmptyString(readProperty(test, 'title'))
+    return parseNonEmptyString([parent, title].filter(Boolean).join(' '))
+}
+
+// `fullTitle` must be invoked AS A METHOD of the runnable that owns it: Mocha's
+// implementation is `this.titlePath().join(' ')`, so calling a detached reference throws
+// `this.titlePath is not a function` and takes the whole afterTest hook down with it.
+function resolveFullTitleFrom(owner: unknown) {
+    if (!owner || typeof owner !== 'object') {
+        return undefined
+    }
+
+    const fullTitle = readProperty(owner, 'fullTitle') as FullTitle | undefined
+
+    const stringTitle = parseNonEmptyString(fullTitle)
     if (stringTitle) {
         return stringTitle
     }
 
-    const callbackTitle = fullTitleCallbackSchema.safeParse(fullTitle)
-    if (callbackTitle.success) {
-        return parseNonEmptyString(callbackTitle.data())
+    if (!fullTitleCallbackSchema.safeParse(fullTitle).success) {
+        return undefined
     }
 
-    return parseNonEmptyString([test.parent, test.title].filter(Boolean).join(' '))
+    try {
+        return parseNonEmptyString((owner as { fullTitle(): unknown }).fullTitle())
+    } catch {
+        // A framework whose accessor throws must not cost us the failure record.
+        return undefined
+    }
+}
+
+// Mocha exposes the running test as `this.test`; `afterEach`-style contexts use
+// `this.currentTest` instead.
+function resolveContextFullTitle(testContext: unknown) {
+    if (!testContext || typeof testContext !== 'object') {
+        return undefined
+    }
+
+    for (const key of ['test', 'currentTest'] as const) {
+        const resolved = resolveFullTitleFrom(readProperty(testContext, key))
+        if (resolved) {
+            return resolved
+        }
+    }
+
+    return undefined
 }
 
 function getCucumberScenarioName(world: Frameworks.World) {
@@ -114,12 +203,26 @@ function getCucumberSpecFile(world: Frameworks.World) {
 }
 
 function getCucumberWorld(world: Frameworks.World): CucumberScenarioWorld | undefined {
-    const result = cucumberScenarioWorldSchema.safeParse(world)
-    return result.success ? result.data : undefined
+    try {
+        // `safeParse` is only safe about the shape it finds, not about reading it: the
+        // passthrough enumerates every own key, so an accessor that throws anywhere on the
+        // world - `result` included - escapes as an exception and costs the failure record.
+        const result = cucumberScenarioWorldSchema.safeParse(world)
+        return result.success ? result.data : undefined
+    } catch {
+        return undefined
+    }
 }
 
-function readProperty(value: object, key: string) {
-    return (value as Record<string, unknown>)[key]
+// Every property here is read off a framework-supplied object, and a partially
+// initialised or hostile runnable can expose an accessor that throws. Losing the
+// afterTest hook to that would lose the failure the rerun exists to fix.
+export function readProperty(value: object, key: string) {
+    try {
+        return (value as Record<string, unknown>)[key]
+    } catch {
+        return undefined
+    }
 }
 
 function parseNonEmptyString(value: unknown) {

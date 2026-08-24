@@ -1,7 +1,10 @@
 import type { Services } from '@wdio/types'
 
+import type { FailedRerunLogger } from '#src/reporter'
+
 export type FailedRerunAttemptType = 'initial' | 'rerun'
-export type FailedRerunFramework = 'mocha' | 'cucumber'
+export type FailedRerunOutcome = 'failed' | 'passed' | 'skipped'
+export type FailedRerunFramework = 'mocha' | 'jasmine' | 'cucumber'
 export type FailedRerunJsonValue =
     | string
     | number
@@ -17,6 +20,10 @@ export interface FailedTestRecord {
     fullTitle: string
     title?: string
     cid?: string
+    capabilityFingerprint?: string
+    // Absent on manifests written before outcome tracking existed; those only ever
+    // contained failures, so a missing value reads as 'failed'.
+    outcome?: FailedRerunOutcome
     error?: FailedTestError
 }
 
@@ -37,9 +44,8 @@ export interface FailedRerunRunArgs {
     spec?: string[]
     services?: Services.ServiceEntry[]
     mochaOpts?: WebdriverIO.MochaOpts
-    cucumberOpts?: WebdriverIO.CucumberOpts & {
-        name?: RegExp[]
-    }
+    jasmineOpts?: WebdriverIO.JasmineOpts
+    cucumberOpts?: WebdriverIO.CucumberOpts
     [key: string]: unknown
 }
 
@@ -55,6 +61,7 @@ export interface FailedTestsRerunOptions {
     rerunManifestPath?: string
     maxReruns?: number
     passOnSuccessfulRerun?: boolean
+    quiet?: boolean
     run?: FailedRerunRun
 }
 
@@ -63,6 +70,7 @@ export interface FailedTestsRerunner {
 }
 
 export interface FailedTestsRerunnerDeps {
+    logger?: FailedRerunLogger
     run?: FailedRerunRun
     manifests?: FailedTestManifestStore
     retryEnv?: FailedRerunRetryEnv
@@ -72,6 +80,20 @@ export interface FailedTestsRerunnerDeps {
 export interface FailedTestManifestStore {
     reset(manifestPath: string): Promise<void>
     read(manifestPath: string): Promise<FailedTestRecord[]>
+    // Writes one record. Optional so existing custom stores keep compiling; a store that
+    // omits it simply does not get the combined rerun manifest, rather than having the
+    // runner write to the filesystem behind its back.
+    append?(manifestPath: string, record: FailedTestRecord): Promise<void>
+    // Every record a rerun wrote, passed ones included, so the runner can prove which
+    // targeted tests actually executed. Optional so existing custom stores keep compiling,
+    // but a store that omits it CANNOT distinguish "the rerun passed" from "the rerun's
+    // filter matched nothing", so execution verification is skipped and a rerun that ran
+    // no tests will be reported as a pass. Implement it whenever that matters.
+    readAll?(manifestPath: string): Promise<FailedTestRecord[]>
+    // How many lines could not be read. A store that omits this is assumed to lose
+    // nothing; the built-in filesystem store reports partial writes so the runner can
+    // refuse to report success for a failure it can no longer see.
+    countUnreadable?(manifestPath: string): Promise<number>
 }
 
 export interface FailedRerunRetryEnv {
@@ -82,9 +104,10 @@ export interface FailedRerunBrowserStackEnv {
     withRerun<T>(specs: string[], run: () => Promise<T>): Promise<T>
 }
 
-export type RerunSpecPlan = MochaRerunSpecPlan | CucumberRerunSpecPlan
+export type RerunSpecPlan = MochaRerunSpecPlan | JasmineRerunSpecPlan | CucumberRerunSpecPlan
 export type RerunPlan = RerunSpecPlan
 export type MochaRerunPlan = MochaRerunSpecPlan
+export type JasmineRerunPlan = JasmineRerunSpecPlan
 export type CucumberRerunPlan = CucumberRerunSpecPlan
 
 interface RerunSpecPlanBase {
@@ -96,6 +119,11 @@ interface RerunSpecPlanBase {
 
 export interface MochaRerunSpecPlan extends RerunSpecPlanBase {
     framework: 'mocha'
+    grep: string
+}
+
+export interface JasmineRerunSpecPlan extends RerunSpecPlanBase {
+    framework: 'jasmine'
     grep: string
 }
 
@@ -118,6 +146,20 @@ export interface FailedRerunMochaRerunAttemptResult extends FailedRerunAttemptRe
     framework: 'mocha'
     spec: string
     specs: string[]
+    // Tests this rerun set out to run.
+    targeted: FailedTestRecord[]
+    // Targeted tests the rerun never executed, i.e. tests the filter failed to match.
+    notExecuted: FailedTestRecord[]
+    grep: string
+}
+
+export interface FailedRerunJasmineRerunAttemptResult extends FailedRerunAttemptResultBase {
+    type: 'rerun'
+    framework: 'jasmine'
+    spec: string
+    specs: string[]
+    targeted: FailedTestRecord[]
+    notExecuted: FailedTestRecord[]
     grep: string
 }
 
@@ -126,16 +168,29 @@ export interface FailedRerunCucumberRerunAttemptResult extends FailedRerunAttemp
     framework: 'cucumber'
     spec: string
     specs: string[]
+    targeted: FailedTestRecord[]
+    notExecuted: FailedTestRecord[]
     name: string[]
 }
 
 export type FailedRerunAttemptResult =
     | FailedRerunInitialAttemptResult
     | FailedRerunMochaRerunAttemptResult
+    | FailedRerunJasmineRerunAttemptResult
     | FailedRerunCucumberRerunAttemptResult
+
+export interface FailedRerunSummary {
+    // Failed the initial run, passed a rerun.
+    flaky: FailedTestRecord[]
+    // Failed the initial run and every rerun.
+    broken: FailedTestRecord[]
+    // Targeted by a rerun that never executed them, so the rerun proves nothing.
+    notExecuted: FailedTestRecord[]
+}
 
 export interface FailedRerunResult {
     exitCode: number
     attempts: FailedRerunAttemptResult[]
     failures: FailedTestRecord[]
+    summary: FailedRerunSummary
 }

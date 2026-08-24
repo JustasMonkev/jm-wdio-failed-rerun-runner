@@ -1,14 +1,18 @@
+import { createHash } from 'node:crypto'
+
 import type { Frameworks, Services } from '@wdio/types'
 
 import { appendFailedTest } from '#src/manifest'
 import { failedRerunServiceOptionsSchema } from '#src/schemas'
 import {
     createCucumberFailedScenarioRecord,
-    createMochaFailedTestRecord
+    createMochaFailedTestRecord,
+    readProperty
 } from '#src/frameworks'
 import type { FailedRerunServiceOptions, FailedTestRecord } from '#src/types'
 
 export default class FailedTestRerunService implements Services.ServiceInstance {
+    readonly #capabilityFingerprint?: string
     public readonly options: FailedRerunServiceOptions
     public readonly capabilities?: WebdriverIO.Capabilities
     public readonly config?: WebdriverIO.Config
@@ -26,29 +30,70 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
         this.options = parsedOptions.data
         this.capabilities = capabilities
         this.config = config
+        this.#capabilityFingerprint = fingerprintCapabilities(capabilities)
     }
 
-    async afterTest(test: Frameworks.Test, _context: unknown, result: Frameworks.TestResult) {
-        if (result.passed || willBeRetriedByWdio(result)) {
+    // A skipped test reaches this hook as `passed: false`, and recording that as a failure
+    // would queue a test that can never pass. It is recorded as a skip instead of dropped:
+    // dropping it leaves an earlier failure for the same test standing as the manifest's
+    // last word, so a `specFileRetries` attempt that ends in a skip could never retire the
+    // failure it replaced. A skip still proves nothing about the test, so it never counts
+    // as evidence that a focused rerun executed what it targeted.
+    async afterTest(test: Frameworks.Test, context: unknown, result: Frameworks.TestResult) {
+        const passed = Boolean(readProperty(result, 'passed'))
+        const skipped = isSkipped(test, result)
+
+        // The retry guard exists to keep a non-final attempt out of the manifest, so it
+        // must only apply to something that will actually be retried. Neither a pass nor a
+        // skip is: Mocha stamps its retry counters on every runnable, so a skipped test can
+        // carry `_retries > 0` with `_currentRetry: 0` and look exactly like a first failed
+        // attempt. Returning there would drop the skip, leaving an earlier failure for the
+        // same test standing as the manifest's last word.
+        if (!passed && !skipped && willBeRetriedByWdio(test, result)) {
             return
         }
 
-        await this.#appendRecord(createMochaFailedTestRecord(test, result, this.#recordContext()))
+        await this.#appendRecord(createMochaFailedTestRecord(
+            test,
+            result,
+            this.#recordContext(passed, skipped),
+            context
+        ))
     }
 
+    // `@wdio/cucumber-framework` reports a SKIPPED scenario as `passed: true`. Taking that
+    // at face value would let a rerun whose scenario was skipped - by a tag filter, or a
+    // Before hook that skips - be reported as a recovery, turning a failing build green.
     async afterScenario(world: Frameworks.World, result: Frameworks.PickleResult, _context: unknown) {
-        if (result.passed || willBeRetriedByWdioScenario(world)) {
+        const passed = Boolean(readProperty(result, 'passed'))
+        const skipped = isSkippedScenario(world)
+
+        if (!passed && !skipped && willBeRetriedByWdioScenario(world)) {
             return
         }
 
-        await this.#appendRecord(createCucumberFailedScenarioRecord(world, result, this.#recordContext()))
+        await this.#appendRecord(createCucumberFailedScenarioRecord(
+            world,
+            result,
+            this.#recordContext(passed, skipped)
+        ))
     }
 
-    #recordContext() {
+    #recordContext(passed?: boolean, skipped?: boolean) {
         return {
             attempt: this.options.attempt || 'initial',
-            cid: process.env.WDIO_WORKER_ID
+            cid: process.env.WDIO_WORKER_ID,
+            capabilityFingerprint: this.#capabilityFingerprint,
+            framework: this.#framework(),
+            outcome: skipped ? 'skipped' as const : (passed ? 'passed' as const : 'failed' as const)
         }
+    }
+
+    // Mocha and Jasmine share the `afterTest` hook but expose different fields and take
+    // different filter options, and the hook payload alone cannot tell them apart. The
+    // resolved WebdriverIO config can.
+    #framework() {
+        return this.config?.framework === 'jasmine' ? 'jasmine' as const : 'mocha' as const
     }
 
     async #appendRecord(record: FailedTestRecord | undefined) {
@@ -58,12 +103,125 @@ export default class FailedTestRerunService implements Services.ServiceInstance 
     }
 }
 
-// WDIO retries the test in-run when `retries` is configured; only the final
-// attempt should decide whether the test lands in the rerun manifest.
-function willBeRetriedByWdio(result: Frameworks.TestResult) {
-    return Boolean(result.retries && result.retries.attempts < result.retries.limit)
+// WebdriverIO derives `skipped` by string-matching the error a framework throws to signal
+// a skip, which can miss. Mocha and Jasmine also mark the test itself as pending, and that
+// flag comes from the framework rather than from a message match, so consult both.
+function isSkipped(test: Frameworks.Test, result: Frameworks.TestResult) {
+    return Boolean(readProperty(test, 'pending')) || Boolean(readProperty(result, 'skipped'))
 }
 
+function isSkippedScenario(world: Frameworks.World) {
+    const status = readNestedProperty(world, 'result', 'status')
+    // Checking the type rather than calling defensively: a status that is not a string
+    // cannot be the marker, and this way a hostile `toUpperCase` is never reached.
+    return typeof status === 'string' && status.toUpperCase() === 'SKIPPED'
+}
+
+// Only the final in-run attempt should decide whether a test lands in the manifest.
+//
+// `result.retries` cannot answer this on its own: @wdio/utils recurses inside
+// `executeAsync` until the budget is spent before it ever returns, so by the time this
+// hook runs `attempts` already equals `limit`. Mocha's own retry counters do survive on
+// the test object as plain properties, and they are the reliable signal.
+function willBeRetriedByWdio(test: Frameworks.Test, result: Frameworks.TestResult) {
+    const currentRetry = readProperty(test, '_currentRetry')
+    const retries = readProperty(test, '_retries')
+
+    if (typeof currentRetry === 'number' && typeof retries === 'number' && currentRetry < retries) {
+        return true
+    }
+
+    const attempts = readNestedProperty(result, 'retries', 'attempts')
+    const limit = readNestedProperty(result, 'retries', 'limit')
+    return typeof attempts === 'number' && typeof limit === 'number' && attempts < limit
+}
+
+// cucumber-js sets `willBeRetried` on the hook parameter itself; @wdio/types declares it
+// nested under `result`, which is why reading only `result.willBeRetried` silently never
+// matched. Accept both.
 function willBeRetriedByWdioScenario(world: Frameworks.World) {
-    return Boolean(world.result?.willBeRetried)
+    const willBeRetried = readProperty(world, 'willBeRetried')
+    return Boolean(willBeRetried ?? readNestedProperty(world, 'result', 'willBeRetried'))
+}
+
+// The nested reads have the same hazard as the shallow ones: `world.result` and
+// `result.retries` are framework-supplied objects too, and an accessor throwing anywhere
+// along the way would cost the failure record the rerun exists to fix.
+function readNestedProperty(value: object, key: string, nestedKey: string) {
+    const nested = readProperty(value, key)
+    return nested && typeof nested === 'object' ? readProperty(nested, nestedKey) : undefined
+}
+
+// The worker id identifies only a slot in the current capability array, which a config
+// may reorder between attempts. Hash stable browser and device fields so changing a
+// rerun's build/session labels does not change identity, and credentials never reach the
+// manifest.
+function fingerprintCapabilities(capabilities: WebdriverIO.Capabilities | undefined) {
+    try {
+        const identity = selectCapabilityIdentity(capabilities)
+        if (!identity) {
+            return undefined
+        }
+
+        return createHash('sha256').update(JSON.stringify(identity)).digest('hex')
+    } catch {
+        return undefined
+    }
+}
+
+const CAPABILITY_IDENTITY_KEYS = new Set([
+    'app',
+    'appPackage',
+    'arch',
+    'automationName',
+    'binary',
+    'browser',
+    'browser_version',
+    'browserName',
+    'browserVersion',
+    'bundleId',
+    'device',
+    'deviceName',
+    'isRealMobile',
+    'os',
+    'os_version',
+    'osVersion',
+    'platform',
+    'platformName',
+    'platformVersion',
+    'realDevice',
+    'realMobile',
+    'udid'
+])
+
+function selectCapabilityIdentity(value: unknown, ancestors = new WeakSet<object>()): unknown {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return undefined
+    }
+
+    if (ancestors.has(value)) {
+        throw new TypeError('Circular capability')
+    }
+
+    ancestors.add(value)
+    try {
+        const selected: Record<string, unknown> = {}
+        for (const key of Object.keys(value).sort()) {
+            const entry = (value as Record<string, unknown>)[key]
+            const unnamespacedKey = key.slice(key.lastIndexOf(':') + 1)
+            if (CAPABILITY_IDENTITY_KEYS.has(unnamespacedKey)) {
+                selected[key] = entry
+                continue
+            }
+
+            const nested = selectCapabilityIdentity(entry, ancestors)
+            if (nested !== undefined) {
+                selected[key] = nested
+            }
+        }
+
+        return Object.keys(selected).length > 0 ? selected : undefined
+    } finally {
+        ancestors.delete(value)
+    }
 }

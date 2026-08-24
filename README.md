@@ -10,6 +10,10 @@ The package is useful when you want a rerun step after the main run finishes, in
 npm install --save-dev jm-wdio-failed-rerun-runner
 ```
 
+`@wdio/cli` and `@wdio/types` (v9) are peer dependencies, so the runner launches **your**
+WebdriverIO rather than a second copy of it. Any WebdriverIO project already has both, and
+npm installs peers automatically; nothing else is needed.
+
 A runnable demo project lives in [`example/`](./example/README.md).
 
 ## Usage
@@ -25,7 +29,26 @@ CLI options:
 - `--max-reruns <count>`: maximum focused rerun rounds. Defaults to `1`.
 - `--no-pass-on-successful-rerun`: keep the initial failing exit code even when focused reruns pass.
 - `--manifest-path <path>`: write the initial-run failure manifest to a known path.
-- `--rerun-manifest-path <path>`: write rerun failure manifests to a known path.
+- `--rerun-manifest-path <path>`: write rerun failure manifests to a known path. Each rerun
+  group also writes its own `<name>.rerun-<round>-<group><ext>` file; the path you give
+  collects every rerun failure.
+- `-q`, `--quiet`: suppress rerun progress and the final summary.
+
+## Output
+
+The runner reports what it is doing and, at the end, separates tests that recovered
+from tests that stayed broken:
+
+```
+[wdio-failed-rerun] initial run failed: 2 tests across 2 specs
+[wdio-failed-rerun] rerun 1/1: login.e2e.ts (1 test), checkout.e2e.ts (1 test)
+[wdio-failed-rerun] summary: 1 flaky test (passed on rerun), 1 still failing
+[wdio-failed-rerun]   flaky:  login flow signs in
+[wdio-failed-rerun]   broken: checkout applies discount
+```
+
+The same breakdown is available programmatically on `result.summary` as `flaky`,
+`broken` and `notExecuted`. Pass `--quiet` (or `quiet: true`) to silence it.
 
 ## Example
 
@@ -61,10 +84,34 @@ const result = await runFailedTestsRerun('./wdio.conf.ts', {
 process.exit(result.exitCode)
 ```
 
+### Configs that read the rerun environment
+
+Every attempt runs in one process, so a config is re-evaluated for each one rather than
+reused from Node's module cache. That covers the config itself in all forms, and helpers it
+`require`s in a CommonJS project.
+
+One case is not covered: a helper reached through a static `import` in an ES module project
+keeps whatever it read the first time, because Node offers no way to invalidate the ES
+module registry. If a helper of yours branches on `WDIO_FAILED_RERUN_RETRY` or
+`BROWSERSTACK_RERUN`, read the variable inside a function rather than at module scope -
+hooks run per attempt, so they always see the current value.
+
+### Registering your own services
+
+Services declared in your config's `services` array are passed through untouched, including
+service classes, instances, and options containing functions.
+
+Services passed to the runner programmatically are a narrower case: they are written into a
+generated config that each WebdriverIO worker loads by path, so they have to be
+JSON-serializable. A class, an instance, or an option that is a function is rejected with a
+message naming the entry. Declare those in your config instead.
+
 ## How It Works
 
+Supported frameworks: Mocha, Jasmine and Cucumber.
+
 1. The launcher sets `WDIO_FAILED_RERUN_RETRY=0` and injects `FailedTestRerunService` into the first WDIO run. The service is injected by the absolute path of the built service entry (exported as `FAILED_RERUN_SERVICE_PATH`), so it loads regardless of the installed package name. Because the path points into the package's `build` directory on disk, bundling this package into another artifact is not supported.
-2. The worker service records failed Mocha `afterTest` events and Cucumber `afterScenario` events into an NDJSON manifest.
+2. The worker service records completed Mocha `afterTest` events and Cucumber `afterScenario` events into an NDJSON manifest. Failures are what drive reruns; a recorded pass supersedes an earlier failure for the same test and capability, which is how a WebdriverIO `specFileRetries` attempt retires the attempt it replaced, and during a focused rerun it is the evidence that a targeted test actually executed.
 3. If the first run passes, the launcher exits with `0` and does not rerun anything.
 4. If the first run fails and the manifest contains failures, the launcher groups failures by framework and spec.
 5. Each spec group is rerun with `WDIO_FAILED_RERUN_RETRY` set to the focused rerun round, one `spec` value, and a framework-specific exact-title filter: `mochaOpts.grep` for Mocha, or `cucumberOpts.name` for Cucumber scenarios.
@@ -83,11 +130,15 @@ Important options:
 - `args`: WDIO launcher args to pass into every run.
 - `maxReruns`: maximum focused rerun rounds. Defaults to `1`.
 - `passOnSuccessfulRerun`: return `0` when focused reruns pass. Defaults to `true`.
-- `manifestPath`: manifest path for the initial run. Defaults to a temp file.
-- `rerunManifestPath`: manifest path for rerun rounds. Defaults to temp files.
+- `manifestPath`: manifest path for the initial run. Defaults to a temp file, which is
+  removed when the run ends; a path you supply is kept as your artifact.
+- `rerunManifestPath`: manifest path for rerun rounds. Defaults to temp files, removed the
+  same way.
 - `run`: injectable runner function for tests or custom launchers.
 
-The result includes the final `exitCode`, all run `attempts`, and unresolved `failures`.
+The result includes the final `exitCode`, all run `attempts`, unresolved `failures`, and a
+`summary` splitting the initial failures into `flaky` (passed on rerun), `broken` (failed
+every time) and `notExecuted` (see below).
 
 Advanced callers and tests can create a rerunner with local adapters:
 
@@ -113,7 +164,35 @@ If a worker exits with failure before any failed test is recorded, the launcher 
 
 If a rerun exits with failure but writes no failure records, the final result stays failed. This preserves hard failures such as setup errors, process crashes, and invalid grep filters.
 
+A focused rerun narrows the run with a title filter, so a filter that matches nothing makes
+the framework exit `0` having run no tests at all. An empty manifest is indistinguishable
+from "everything passed", so reruns record the tests they executed and the runner checks
+that every targeted test actually ran. A test the rerun never executed is reported in
+`notExecuted`, keeps the run failing, and is never counted as a recovery. Without that
+check a stale title, an excluded spec, or an unresolvable path would silently turn a red
+build green.
+
+Custom `manifests` adapters that do not implement `readAll` cannot report passed tests, so
+execution cannot be verified for them and this protection is skipped.
+
+A manifest line that cannot be read is skipped rather than aborting the run, but the
+failure it described is then invisible. The runner counts such lines, reports them, and
+refuses to report the run as passing, since a test it can no longer see may still be
+failing. Custom adapters signal this through the optional `countUnreadable` method.
+
 Recorded errors preserve standard `Error` fields plus serializable `cause` and custom enumerable properties. This keeps the manifest useful for diagnostics without allowing non-JSON values to break writes.
+
+## Known Limitations
+
+Reporter output is not namespaced per attempt. Every attempt launches the same WebdriverIO
+config, so reporters that write to a fixed `outputDir` (JUnit, Allure) name their files by
+worker id, and a rerun's files can overwrite the initial run's. If you archive reporter
+output in CI, copy it out of `outputDir` between the initial run and the reruns, or give the
+rerun step its own `outputDir`.
+
+Reruns are sequential: each spec group is a separate WebdriverIO launcher run, so a round
+with many failed specs starts the launcher once per spec rather than using the config's
+`maxInstances` to run them in parallel.
 
 ## BrowserStack Support
 
@@ -152,7 +231,30 @@ const rerunner = createFailedTestsRerunner({
 
 Mocha failures are selected by full title with `mochaOpts.grep`.
 
-Cucumber scenario failures are selected by scenario name with `cucumberOpts.name`. If a feature file contains duplicate scenario names, WebdriverIO's name filter can still match more than one scenario; use unique scenario names for precise focused reruns.
+Jasmine failures are selected by full name with `jasmineOpts.grep`, which Jasmine matches
+against `spec.getFullName()`. The framework is read from the WebdriverIO config, because
+Mocha and Jasmine share the `afterTest` hook but expose different fields on its payload and
+take different filter options.
+
+Cucumber scenario failures are selected by scenario name with `cucumberOpts.name`, passed as
+anchored strings. WebdriverIO forwards launcher arguments to worker processes with
+`childProcess.send()`, which serializes them as JSON, so a `RegExp` would arrive in the
+worker as `{}` and match nothing. If a feature file contains duplicate scenario names,
+WebdriverIO's name filter can still match more than one scenario; use unique scenario names
+for precise focused reruns.
+
+Focused reruns disable `mochaOpts.invert` and `jasmineOpts.invertGrep`, because the
+focused filter names exactly the tests that must run; keeping a project's own inversion
+would exclude the failed test and run everything else.
+
+Tests that share a full title within one spec cannot be targeted individually — the
+filter selects all of them, and their manifest records cannot be told apart. Give tests
+unique titles where focused reruns matter.
+
+Mocha full titles are read from the live test context. WebdriverIO hands `afterTest` a
+spread of the Mocha test object, which drops `fullTitle` (a prototype method) and reduces
+`parent` to the immediate suite title, so rebuilding the title from `parent + title` would
+lose every outer `describe` and produce a `grep` that matches nothing.
 
 ## Development
 
@@ -219,5 +321,6 @@ flowchart LR
 - Initial workers see `WDIO_FAILED_RERUN_RETRY=0`; first focused rerun workers see `1`.
 - Rerun specs are planned from recorded failures, not from all specs in the config.
 - Multiple failed tests in one spec share a single exact-title filter.
+- A rerun that does not actually execute a test it targeted never counts as a pass.
 - Later rerun rounds are based only on the previous round's unresolved failures.
 - If failure data is missing, the launcher preserves the failing exit code instead of widening the rerun.

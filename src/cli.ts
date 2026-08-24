@@ -1,4 +1,4 @@
 #!/usr/bin/env node
-import run from '#src/run'
+import run, { exitWith } from '#src/run'
 
-void run()
+await exitWith(await run())
